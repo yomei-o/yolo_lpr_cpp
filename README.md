@@ -27,7 +27,9 @@ sh build/gcc.sh pure/jlpr.cpp -o jlpr.exe          # または sh build/cc.sh (M
 #          横浜 200 か 3591
 #          conf 0.57 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00
 
+python tools/jlpr.py detect --img assets/tokyu-bus-yokohama200ka3591.jpg   # Python 版（同じフラグ）
 python tools/parity/labels.py                       # ラベル表の C++⇔Python 一致 (M1)
+python tools/parity/infer.py --ref <lpr_cpp>/pure/ref   # 推論の C++⇔Python 一致 (M3)
 ./jlpr.exe parity-ocr --ocr models/plate_ocr.onnx --ref <lpr_cpp>/pure/ref
 #   exported ONNX vs original-ONNX fixture: worst 3.299e-05   argmax 9/9   MATCH
 ```
@@ -84,7 +86,7 @@ node wasm/test_node.js         # ヘッドレスの回帰テスト（CLI と同�
 | ラベル表（地名138/かな/分類番号/種別） | `labels.py` ✅ | `spec.hpp` ✅ | 唯一の定義 `spec/labels.txt` を**両方が実行時にパース**（生成物ではなく同じ入力）。dump と埋め込みヘッダがバイト一致 |
 | 合成データ生成 | `gen.py` | `gen.cpp` | 同じ seed で**文字列・4隅・変換パラメータ・色・種別が完全一致**。画像はラスタライザ差（PIL/FreeType vs stb_truetype）が出るので、一致は幾何とラベルまでとし、画像は統計と目視で同等を確認 |
 | 学習（検出 / 4隅 / 認識） | PyTorch (+Ultralytics) | 自作 autograd（`yolov8_cpp`/`lpr_cpp` 由来） | 同じ初期重み・同じバッチ・同じ LR で **loss と勾配が 1e-4 以内**。小データ・数ステップで縛る |
-| 推論 | onnxruntime または自前 | 自前 ONNX ランナ | 同一画像で**同一文字列**、スコア差 1e-4 以内 |
+| 推論 | `infer.py`（onnxruntime） ✅ | 自前 ONNX ランナ ✅ | 同一画像で**同一文字列・同一 argmax**、box 差 0.10px / det 差 0.0000（実測）。自作側の float 加算誤差は認識器 3.3e-05・検出器 3e-03 なので、閾値ぎりぎりの box は割れる |
 | 評価（mAP / 全文一致 / 色別内訳） | `eval.py` | `jlpr val` | 同じデータセットで**同じ数値**（mAP は 1e-3 以内） |
 | ONNX 出力 | `torch.onnx.export` | 自前エクスポータ | 出力 ONNX を相互に読み込んで **forward が 1e-5 以内** |
 | WASM | — | `emcc`（C++ 側の役目） | ブラウザで CLI と同じ文字列が出る |
