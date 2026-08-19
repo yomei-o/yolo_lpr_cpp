@@ -256,11 +256,14 @@ class WithSoftmax(torch.nn.Module):
 
 def export_onnx(model, order, path, opset=13):
     model.eval()
+    was = next(model.parameters()).device
+    model.to("cpu")                     # tracing a CUDA model with a CPU dummy input fails
     wrapper = WithSoftmax(model, order)
     dummy = torch.zeros(1, 3, 128, 128)
     torch.onnx.export(wrapper, dummy, path, input_names=["input"], output_names=list(order),
                       opset_version=opset, dynamo=False,
                       dynamic_axes=None)
+    model.to(was)
     print("wrote %s (%.2f MB)" % (path, os.path.getsize(path) / 1048576))
 
 
