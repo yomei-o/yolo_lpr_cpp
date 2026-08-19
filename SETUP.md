@@ -61,6 +61,10 @@ python tools/train_ocr.py --synth data/synth --alpr ../alpr_jp --steps 3000 --ba
 # 4隅回帰
 python tools/train_corner.py --synth data/synth --steps 3000 --batch 64 --export models/plate_corner_new.onnx
 
+# 4隅回帰（C++。--init random なら出発点の ONNX も C++ が書くので Python は要らない）
+./jlpr.exe train --model corner --synth data/synth --steps 3000 --batch 64 \
+  --init random --width 24 --export models/plate_corner_new.onnx
+
 # 検出器（Ultralytics。yolov8n.pt を自動取得。T4 で 28 epoch 約 70 分）
 python tools/train_det.py --data data/det_train2 --data data/det_real --val data/det_val2 \
   --epochs 28 --imgsz 640 --batch 32 \
@@ -84,9 +88,14 @@ python tools/parity/gen.py    && python tools/parity/train.py            # 生�
 ./jlpr.exe train --model det --gradcheck                                 # 検出損失の勾配（データ不要）
 ./jlpr.exe train --model det --data data/det --steps 1 --batch 2 --dump-fixture scratch/det_fix.bin
 python tools/parity/train_det.py --fixture scratch/det_fix.bin           # 検出損失 vs ultralytics
+./jlpr.exe train --model corner --synth data/synth --init models/plate_corner.onnx --steps 1 \
+  --batch 8 --dump-fixture scratch/crn_fix.bin
+python tools/parity/train_corner.py --fixture scratch/crn_fix.bin --onnx models/plate_corner.onnx
 ./jlpr.exe val --data ../alpr_jp --kind alpr --holdout --ocr models/plate_ocr_new.onnx   # 実データ hold-out
 python tools/check_regions.py --data data/region_sweep --ocr models/plate_ocr_new.onnx --alpr ../alpr_jp
 python tools/eval_det.py --data data/det_eval --det models/plate_det_new_320.onnx --det-kind v8 --fmt cxcywh
+./jlpr.exe val --model det --data data/det_eval --det models/plate_det_new_320.onnx --fmt cxcywh   # 同じ数値
+python tools/parity/eval_det.py --data data/det_eval --det models/plate_det_new_320.onnx          # 突き合わせ
 ./jlpr.exe detect --img assets/kei-commercial-yokohama480ri4567.jpg --det models/plate_det_v8n_320.onnx \
   --det-kind v8 --fmt cxcywh --corner models/plate_corner.onnx        # 実写 1 枚（最後は必ずこれ）
 ```

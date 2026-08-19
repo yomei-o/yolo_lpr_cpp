@@ -5,7 +5,9 @@
 //   jlpr export     --ocr <ref_dir> --out models/plate_ocr.onnx    (weights.bin + manifest -> ONNX)
 //   jlpr parity-ocr --ocr <onnx> --ref <ref_dir>                   (vs the original ONNX fixture)
 //   jlpr detect     --img <file> [--det <onnx>] [--ocr <onnx>] [--out out.png] [--conf f] [--single]
-//   jlpr gen | train | val                                          (later milestones)
+//   jlpr gen | gen-det                                             (synthetic crops / frames)
+//   jlpr train      --model ocr|det|corner ...                     (all three stages train here)
+//   jlpr val        [--model det] ...                              (recognizer / detector metrics)
 //
 // build: sh build/gcc.sh pure/jlpr.cpp -o jlpr.exe   |   sh build/cc.sh pure/jlpr.cpp -o jlpr.exe
 #define STB_IMAGE_IMPLEMENTATION
@@ -21,6 +23,8 @@
 #include "onnx_train.hpp"
 #include "train_ocr.hpp"
 #include "train_det.hpp"
+#include "eval_det.hpp"
+#include "train_corner.hpp"
 #include <filesystem>
 #ifdef _OPENMP
 #include <omp.h>
@@ -552,11 +556,113 @@ static int cmd_train_det(int argc, char** argv) {
   return 0;
 }
 
+// jlpr train --model corner — train the 4-corner regressor (pure/train_corner.hpp). Mirrors
+// tools/train_corner.py, down to the order of the random draws, so the two see the same batch.
+static int cmd_train_corner(int argc, char** argv) {
+  std::string synth = arg_of(argc, argv, "--synth", "");
+  std::string valdir = arg_of(argc, argv, "--val", "");
+  std::string init = arg_of(argc, argv, "--init", "random");
+  std::string out = arg_of(argc, argv, "--export", "");
+  std::string fixture = arg_of(argc, argv, "--dump-fixture", "");
+  int width = std::atoi(arg_of(argc, argv, "--width", "24").c_str());
+  int steps = std::atoi(arg_of(argc, argv, "--steps", "2000").c_str());
+  int batch = std::atoi(arg_of(argc, argv, "--batch", "64").c_str());
+  float lr0 = (float)atof(arg_of(argc, argv, "--lr", "1e-3").c_str());
+  float wd = (float)atof(arg_of(argc, argv, "--weight-decay", "1e-4").c_str());
+  float beta = (float)atof(arg_of(argc, argv, "--huber-beta", "0.02").c_str());
+  float jitter = (float)atof(arg_of(argc, argv, "--jitter", "0.04").c_str());
+  float expand_lo = (float)atof(arg_of(argc, argv, "--expand-lo", "0.05").c_str());
+  float expand_hi = (float)atof(arg_of(argc, argv, "--expand-hi", "0.45").c_str());
+  float clip = (float)atof(arg_of(argc, argv, "--clip", "5.0").c_str());
+  int eval_every = std::atoi(arg_of(argc, argv, "--eval-every", "250").c_str());
+  uint64_t seed = strtoull(arg_of(argc, argv, "--seed", "77").c_str(), nullptr, 10);
+  bool dump_loss = has_flag(argc, argv, "--dump-loss");   // parity: the per-step loss only
+
+  if (synth.empty()) {
+    printf("usage: jlpr train --model corner --synth <dir with corners.txt> [--val dir] "
+           "[--init random|onnx] [--width N] [--steps N] [--batch N] [--lr f] [--export onnx]\n");
+    return 1;
+  }
+  std::vector<crn::Item> train = crn::read_corners(synth);
+  if (train.empty()) { printf("no corners.txt in %s (generate with `jlpr gen`)\n", synth.c_str()); return 1; }
+  std::vector<crn::Item> val = valdir.empty() ? train : crn::read_corners(valdir);
+
+  onx::Graph g = (init == "random") ? crn::build_graph(width, seed) : onx::load_onnx(init);
+  onx::Trainable t = onx::make_trainable(g);
+  if (!dump_loss)
+    printf("corner training: %zu crops (val %zu), init %s, %zu tensors / %zu parameters\n",
+           train.size(), val.size(), init.c_str(), t.params.size(), onx::param_count(t));
+
+  Adam opt(t.params, lr0, 0.9f, 0.999f, 1e-8f, wd, true);        // AdamW (decoupled), as in torch
+  Rng rng(seed);
+  double run = -1;
+  for (int step = 1; step <= steps; ++step) {
+    // the Python schedule verbatim: linear warmup over 100 steps, multiplied by a cosine over the run
+    const float lr = lr0 * std::min(1.f, (float)step / 100.f) *
+                     (0.5f * (1.f + std::cos(3.14159265358979f * (float)step / (float)steps)));
+    opt.lr = lr;
+    crn::Batch ba = crn::make_batch(train, rng, batch, jitter, expand_lo, expand_hi);
+    std::map<std::string, Tensor> vals = onx::run_onnx(t.g, ba.x, {}, &t.init, true);
+    Tensor pred = vals.at(t.g.outputs[0].name);
+    Tensor loss = crn::smooth_l1(pred, ba.y, beta);
+    opt.zero_grad();
+    backward(loss);
+    crn::clip_grad_norm(t.params, clip);
+    if (!fixture.empty() && step == 1) {
+      // step 1's batch, loss and every parameter gradient — what tools/parity/train_corner.py
+      // replays through the PyTorch CornerNet. Written after clip_grad_norm and before opt.step(),
+      // so the weights are still the ones in --init and the gradients are the ones about to be used.
+      FILE* f = fopen(fixture.c_str(), "wb");
+      if (f) {
+        auto wi = [&](int32_t v) { fwrite(&v, 4, 1, f); };
+        fwrite("JLPRCRN1", 1, 8, f);
+        wi(batch); wi(crn::IN_PX); wi((int32_t)t.params.size());
+        fwrite(ba.x->data.data(), 4, (size_t)ba.x->numel(), f);
+        fwrite(ba.y.data(), 4, ba.y.size(), f);
+        float lv = loss->data[0];
+        fwrite(&lv, 4, 1, f);
+        for (size_t i = 0; i < t.params.size(); ++i) {
+          wi((int32_t)t.param_names[i].size());
+          fwrite(t.param_names[i].data(), 1, t.param_names[i].size(), f);
+          wi((int32_t)t.params[i]->numel());
+          fwrite(t.params[i]->grad.data(), 4, (size_t)t.params[i]->numel(), f);
+        }
+        fclose(f);
+        if (!dump_loss) printf("wrote %s (batch, loss and %zu parameter gradients of step 1)\n",
+                               fixture.c_str(), t.params.size());
+      }
+    }
+    opt.step();
+    const double lv = loss->data[0];
+    run = run < 0 ? lv : 0.9 * run + 0.1 * lv;
+    free_graph(loss);
+    if (dump_loss) printf("%d %.8f\n", step, lv);
+    else if (step % 50 == 0 || step == 1)
+      printf("  step %5d/%d  loss %.5f  lr %.2e\n", step, steps, run, lr);
+    if (!dump_loss && eval_every > 0 && step % eval_every == 0) {
+      printf("  eval @%d: mean corner error %.2f%% of plate width\n", step,
+             100 * crn::eval_error(t, val));
+      fflush(stdout);
+    }
+    fflush(stdout);
+  }
+  if (!dump_loss)
+    printf("final: mean corner error %.2f%% of plate width (target <= 1.5%%)\n",
+           100 * crn::eval_error(t, val, 800));
+  if (!out.empty()) {
+    onx::write_back(t);                      // weights *and* the BN running stats this trained
+    onx::save_onnx(t.g, out);
+    printf("wrote %s\n", out.c_str());
+  }
+  return 0;
+}
+
 // jlpr train --model ocr — fine-tune the recognizer ONNX in place (see pure/train_ocr.hpp).
 static int cmd_train(int argc, char** argv) {
   std::string model = arg_of(argc, argv, "--model", "ocr");
   if (model == "det") return cmd_train_det(argc, argv);
-  if (model != "ocr") { printf("jlpr train: --model must be ocr or det\n"); return 1; }
+  if (model == "corner") return cmd_train_corner(argc, argv);
+  if (model != "ocr") { printf("jlpr train: --model must be ocr, det or corner\n"); return 1; }
   std::string onnx_in = arg_of(argc, argv, "--init", "models/plate_ocr.onnx");
   std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string synth = arg_of(argc, argv, "--synth", "");
@@ -760,7 +866,110 @@ static int cmd_train(int argc, char** argv) {
 // jlpr val — the C++ side of tools/eval_ocr.py: region top-1 on real crops, per-head + whole-plate on
 // generated ones. Same numbers, same fixed evaluation margin, so a model can be judged without
 // Python anywhere in the loop.
+// jlpr val --model det — the C++ side of tools/eval_det.py, plus the mAP that used to require
+// Ultralytics. Metrics and their two matchings live in pure/eval_det.hpp.
+static int cmd_val_det(int argc, char** argv) {
+  std::string data = arg_of(argc, argv, "--data", "");
+  std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_v8n_320.onnx");
+  int limit = std::atoi(arg_of(argc, argv, "--limit", "0").c_str());
+  int imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "0").c_str());
+  float conf = (float)atof(arg_of(argc, argv, "--conf", "0.25").c_str());
+  float iou_thr = (float)atof(arg_of(argc, argv, "--iou", "0.5").c_str());
+  float conf_lo = (float)atof(arg_of(argc, argv, "--conf-lo", "0.001").c_str());
+  bool as_json = has_flag(argc, argv, "--json");
+  if (data.empty()) {
+    printf("usage: jlpr val --model det --data <dir with images/ labels/> [--det onnx] "
+           "[--fmt xyxy|cxcywh] [--conf f] [--iou f] [--imgsz N] [--limit N] [--json]\n");
+    return 1;
+  }
+  jl::DetCfg cfg;
+  cfg.kind = jl::DetKind::V8;
+  cfg.nc = 1;
+  cfg.plate_class = 0;
+  cfg.imgsz = imgsz;
+  cfg.conf = std::min(conf, conf_lo);        // one pass at the low threshold: NMS cannot let a
+  cfg.nms = (float)atof(arg_of(argc, argv, "--nms", "0.45").c_str());   // weak box suppress a strong
+  cfg.v8_fmt = (arg_of(argc, argv, "--fmt", "cxcywh") == "xyxy") ? BoxFmt::XYXY : BoxFmt::CXCYWH;
+
+  onx::Graph det = onx::load_onnx(det_p);
+  std::vector<std::string> files;
+  trn::list_images_recursive(data + "/images", files);
+  std::sort(files.begin(), files.end());
+  if (limit > 0 && (int)files.size() > limit) files.resize((size_t)limit);
+  if (files.empty()) { printf("no images under %s/images\n", data.c_str()); return 1; }
+
+  const std::vector<float> thr = evd::iou_thresholds();
+  std::vector<evd::Scored> all;
+  std::vector<int> tp_b(evd::buckets().size(), 0), gt_b(evd::buckets().size(), 0);
+  int n_gt = 0, n_det_at_conf = 0, fp_bucket = 0, empty_frames = 0, fp_empty = 0;
+  for (size_t k = 0; k < files.size(); ++k) {
+    int W = 0, H = 0, C = 0;
+    std::vector<unsigned char> blob = trn::read_file(files[k]);
+    unsigned char* im = blob.empty() ? nullptr
+                                     : stbi_load_from_memory(blob.data(), (int)blob.size(), &W, &H, &C, 3);
+    if (!im) { printf("cannot read %s\n", files[k].c_str()); continue; }
+    std::string stem = files[k].substr(files[k].find_last_of("/\\") + 1);
+    stem = stem.substr(0, stem.find_last_of('.'));
+    std::vector<evd::GtBox> gts;
+    {
+      std::vector<unsigned char> lb = trn::read_file(data + "/labels/" + stem + ".txt");
+      std::istringstream ss(std::string(lb.begin(), lb.end()));
+      std::string line;
+      while (std::getline(ss, line)) {
+        std::istringstream ls(line);
+        int c; float xc, yc, w, h;
+        if (!(ls >> c >> xc >> yc >> w >> h)) continue;
+        if (w <= 0 || h <= 0) continue;
+        gts.push_back({(xc - w / 2) * W, (yc - h / 2) * H, (xc + w / 2) * W, (yc + h / 2) * H, w});
+      }
+    }
+    std::vector<jl::Box> boxes = jl::detect_plates(det, im, W, H, cfg);
+    stbi_image_free(im);
+    std::vector<evd::DetBox> dets, strong;
+    for (const jl::Box& b : boxes) {
+      dets.push_back({b.x1, b.y1, b.x2, b.y2, b.score});
+      if (b.score >= conf) strong.push_back(dets.back());
+    }
+    n_gt += (int)gts.size();
+    n_det_at_conf += (int)strong.size();
+    if (gts.empty()) { ++empty_frames; fp_empty += (int)strong.size(); }
+    evd::match_frame(dets, gts, thr, all);                 // confidence-ranked, for mAP
+    evd::bucket_match(strong, gts, iou_thr, tp_b, gt_b, fp_bucket);   // per-gt best IoU, for the table
+    if (!as_json && (k + 1) % 100 == 0) { printf("  %zu/%zu\n", k + 1, files.size()); fflush(stdout); }
+  }
+  evd::Report r = evd::summarize(all, n_gt, conf);
+  if (as_json) {
+    printf("{\"frames\":%zu,\"gt\":%d,\"map50\":%.6f,\"map50_95\":%.6f,\"precision\":%.6f,"
+           "\"recall\":%.6f,\"f1\":%.6f,\"tp\":%d,\"fp\":%d,\"buckets\":[",
+           files.size(), n_gt, r.map50, r.map5095, r.precision, r.recall, r.f1, r.tp, r.fp);
+    for (size_t b = 0; b < gt_b.size(); ++b)
+      printf("%s{\"lo\":%.2f,\"hi\":%.2f,\"gt\":%d,\"found\":%d}", b ? "," : "", evd::buckets()[b][0],
+             evd::buckets()[b][1], gt_b[b], tp_b[b]);
+    printf("],\"bucket_fp\":%d,\"empty_frames\":%d,\"fp_on_empty\":%d}\n", fp_bucket, empty_frames, fp_empty);
+    return 0;
+  }
+  printf("\n%zu frames, conf>=%.2f, IoU>=%.2f, model=%s\n", files.size(), conf, iou_thr,
+         det_p.c_str());
+  printf("%-16s %8s %8s %8s\n", "plate share", "GT", "found", "recall");
+  for (size_t b = 0; b < gt_b.size(); ++b) {
+    if (!gt_b[b]) continue;
+    char name[32];
+    snprintf(name, sizeof name, "%.0f-%.0f%%", evd::buckets()[b][0] * 100,
+             std::min(1.f, evd::buckets()[b][1]) * 100);
+    printf("%-16s %8d %8d %7.1f%%\n", name, gt_b[b], tp_b[b], 100.0 * tp_b[b] / gt_b[b]);
+  }
+  int tot_g = 0, tot_t = 0;
+  for (size_t b = 0; b < gt_b.size(); ++b) { tot_g += gt_b[b]; tot_t += tp_b[b]; }
+  printf("%-16s %8d %8d %7.1f%%\n", "all", tot_g, tot_t, 100.0 * tot_t / std::max(1, tot_g));
+  printf("false positives: %d (of %d detections); on the %d plate-free frames: %d\n", fp_bucket,
+         n_det_at_conf, empty_frames, fp_empty);
+  printf("mAP50 %.4f  mAP50-95 %.4f   (P %.4f  R %.4f  F1 %.4f at conf %.2f, TP %d FP %d FN %d)\n",
+         r.map50, r.map5095, r.precision, r.recall, r.f1, conf, r.tp, r.fp, r.fn);
+  return 0;
+}
+
 static int cmd_val(int argc, char** argv) {
+  if (arg_of(argc, argv, "--model", "ocr") == "det") return cmd_val_det(argc, argv);
   std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v2.onnx");
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string data = arg_of(argc, argv, "--data", "");
@@ -1059,7 +1268,9 @@ int main(int argc, char** argv) {
            "  jlpr train      --model ocr --synth <dir> --alpr <root> [--export onnx]\n"
            "  jlpr train      --model det --data <yolo dir> [--init onnx] [--steps N] [--batch N] [--lr f]\n"
            "                              [--limit N] [--export onnx] [--gradcheck] [--dump-fixture bin]\n"
-           "  jlpr val        --data <dir> [--kind alpr|synth] [--holdout]\n");
+           "  jlpr train      --model corner --synth <dir> [--init random|onnx] [--width N] [--export onnx]\n"
+           "  jlpr val        --data <dir> [--kind alpr|synth] [--holdout]\n"
+           "  jlpr val        --model det --data <yolo dir> [--det onnx] [--fmt xyxy|cxcywh] [--conf f]\n");
     return 1;
   }
   std::string cmd = argv[1];
