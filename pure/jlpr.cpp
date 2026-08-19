@@ -74,7 +74,7 @@ static std::string escape_line(const std::string& s) {
 static void make_dir(const std::string& d) {
   std::string acc;
   for (size_t i = 0; i <= d.size(); ++i) {
-    if (i == d.size() || d[i] == '/' || d[i] == '\') {
+    if (i == d.size() || d[i] == '/' || d[i] == (char)0x5c) {   // 0x5c = backslash
       if (!acc.empty() && acc != "." && acc != "..") {
 #ifdef _WIN32
         _mkdir(acc.c_str());
