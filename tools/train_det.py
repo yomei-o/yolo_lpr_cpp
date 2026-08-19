@@ -58,7 +58,7 @@ def main():
                     help="skip training and export this .pt (recover from a failed export without "
                          "paying for the epochs again)")
     a = ap.parse_args()
-    if not a.data:
+    if not a.data and not a.export_only:
         raise SystemExit("pass at least one --data <dir with images/ and labels/>")
 
     try:
