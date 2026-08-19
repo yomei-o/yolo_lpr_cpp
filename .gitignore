@@ -1,0 +1,13 @@
+scratch/
+data/
+*.obj
+*.exe
+*.o
+*.pdb
+*.ilk
+*.bin
+*.pt
+!spec/*.txt
+__pycache__/
+*.pyc
+.venv/
