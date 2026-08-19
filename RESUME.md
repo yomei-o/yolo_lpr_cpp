@@ -24,6 +24,7 @@ det 0.93 / 地名 conf 0.94 / 0.44 秒（WASM, node, SIMD）── CLI と同じ
 | 実写のバス（画面幅 11%） | `横浜 200 か 3591`、自前 640 で det 0.41 / 借り物で 0.80（自前 320 は落とす） |
 | WASM（node、実写 2 枚） | CLI と同じ文字列・同じ box を assert して **PASS**、0.44-1.04 秒/フレーム |
 | C++ ⇔ Python | 推論は文字列・argmax 一致、学習は step1 の loss 差 **1e-6**、生成は labels/meta がバイト一致 |
+| 検出器の学習（C++、2026-08-19 夜に追加） | ultralytics の `v8DetectionLoss` と **loss 3.1e-06 / 勾配 2.7e-06** 一致（同じ head テンソル）。2 枚固定 40 step で box 0.247 → **0.024** |
 | 空クローンからの通し | clone 2 本 → ビルド → 生成 → 実写検出 → 学習 → パリティまで **通る**（`SETUP.md`） |
 | ビルド | MSVC 14.41（vcvars 不要の `build/cc.sh`）・g++ 14.2・emcc（`-msimd128`）の 3 系統 |
 
@@ -105,11 +106,15 @@ det 0.93 / 地名 conf 0.94 / 0.44 秒（WASM, node, SIMD）── CLI と同じ
       `data/det_eval` のバケット別 recall: 320 で **93.7%**、640 で **97.1%**（借り物は同セットで 13.7%）。
       プレートが画面幅 3%〜95% のどこでも検出でき、**車体が無くても取れる**（実写の黒ナンバー 0.93）。
       完了条件のうち「色別 recall ≥ 0.90」だけ未測定（実写の黄/緑ナンバーが手元に無い）。
-- [ ] **M7b C++ 側の検出器学習** — `yolov8_cpp` から v8 loss と TAL を移植する作業（約 1,100 行）。
-      必要なのは `tal.hpp`(104) / `v8pure.hpp`(100) / `net.hpp`(136) / `net_unfused.hpp`(124) /
-      `blocks.hpp`(70) / `dataset.hpp`(308) / `metrics.hpp`(93) / `ptio.hpp`(201) と、
-      **cls head の nc=1 再初期化**（同リポ RESUME #2）。認識器と違い ONNX を直接学習する方式が使えない
-      （v8 の損失は生の head 出力を必要とし、グラフの外側にあるため）。
+- [x] **M7b C++ 側の検出器学習** — 完了（2026-08-19 夜）。**「ONNX 直接学習は使えない」という前提が
+      間違いだった**: Ultralytics の ONNX には per-level の head conv がそのまま残っていて
+      （`/model.22/cv2.<l>/cv2.<l>.2/Conv_output_0` = box 分布 64ch、`/model.22/cv3.<l>/…` = cls logit）、
+      その 6 本で `stop` すれば先は推論用の尻尾でしかない。よって yolov8_cpp からの 1,100 行移植は不要で、
+      書いたのは損失だけ（`pure/train_det.hpp` = TAL 割り当て・CIoU・DFL・BCE）。`jlpr train --model det`。
+      パリティ **PASS**: 同じ head テンソルを食わせて ultralytics 8.4.104 の `v8DetectionLoss` と
+      loss 3.1e-06・勾配 2.7e-06（相対）まで一致（`tools/parity/train_det.py`）。
+      gradcheck **PASS**（142 箇所、最悪 2.7e-03 = float32 中心差分の分解能）。
+      2 枚固定 40 step で box 0.247 → 0.024 / cls 0.144 → 0.038。詳細は下の節。
 - [~] **M8 WASM 仕上げ** — GitHub Pages 公開済み（`https://yomei-o.github.io/yolo_lpr_cpp/wasm/`）、
       検出器 3 択（借り物 / 自前320 / 自前640）、トラッキングで自動スキャン、1 フレーム 0.44-1.04 秒を実測掲載。
       `wasm/test_node.js` は実写 2 枚のフィクスチャで CLI と一致（PASS）。
@@ -138,10 +143,60 @@ Kaggle GPU は README の kbridge 節（学習 job の先頭は必ず
    自動スキャン、手動枠。`https://yomei-o.github.io/yolo_lpr_cpp/wasm/`
 4. **色別 recall（白/黄/緑/黒）** が M7 の完了条件のまま未測定。実写の黄・緑ナンバーが必要。
    合成の色替えは簡単すぎて役に立たないことは実測済み（README の落とし穴）。
-5. **M7b C++ 側の検出器学習**（v8 loss + TAL の移植、約 1,100 行）。ここだけ対等性が大きく欠けている。
-   4隅回帰の学習（`jlpr train --model corner`）も Python のみ。
+5. **4隅回帰の学習（`jlpr train --model corner`）** が対等性の最後の穴（検出器の C++ 学習 M7b は
+   2026-08-19 夜に完了）。検出器側で残っているのは学習の**中身**（mosaic 等の拡張、EMA/SGD スケジュール、
+   C++ での mAP 評価）と速度で、CPU 320px batch2 で約 3.5 秒/step なので本番の学習量は Python/GPU のまま。
 6. 却下済みなので触らないこと: 検出器 480 での 320/640 統合（合成では良いが実写の遠景を落とす）、
    4隅回帰 v2（合成 1.89% でも実写で悪化）、書体を増やして地名を改善（差は 1.4pt しかない）。
+
+## C++ で検出器を学習できるようにした — 2026-08-19 夜（M7b）
+
+**一番大事なのは、ここに書いてあった前提が間違いだったこと。** 「v8 の損失は生の head 出力を必要とし、
+それはグラフの外側にあるから ONNX 直接学習は使えない、yolov8_cpp から 1,100 行移植せよ」と書いていたが、
+Ultralytics の ONNX を実際に開いたら **head conv が per-level でそのまま残っていた**:
+
+```
+/model.22/cv2.<l>/cv2.<l>.2/Conv_output_0   [B, 64, H, W]   box 分布 logit（4 辺 x reg_max=16）
+/model.22/cv3.<l>/cv3.<l>.2/Conv_output_0   [B, nc, H, W]   クラス logit（sigmoid 前）
+```
+
+その先（Reshape → Concat → DFL softmax → anchor 復号 → Concat）は**推論用の尻尾**でしかない。
+つまり認識器と同じ `run_onnx(..., stop)` で 6 本を掴めば、そこに損失を付けるだけで backward が
+全 Conv 重みに届く。書いたのは損失だけ（`pure/train_det.hpp`）で、アーキテクチャは一行も書いていない。
+
+**head の探し方は名前ではなくグラフの形**: DFL の Softmax から Transpose → Reshape → Concat と
+逆にたどると box 側の per-level テンソルが、cls 側は Sigmoid の入力の Concat から辿れる。
+module 番号が違うエクスポート（`/model.16/…` など）でも動く。
+
+**勾配は手書き**（autograd に min/max/atan/topk が無く、割り当ては元々微分不可）。ただし CIoU の
+微分だけは手で書くと間違えるので、**4 変数の前進微分（dual number, `det::D4`）**で値と一緒に出している。
+
+| 確認 | 結果 |
+|---|---|
+| ultralytics 8.4.104 との loss 一致 | box 2.5e-07 / cls 9.7e-06 / dfl 2.3e-07 / 合計 **3.1e-06**（相対） |
+| 同・勾配一致 | box head **2.7e-06** / cls head **3.1e-06**（max\|差\| / max\|勾配\|） |
+| gradcheck（解析 vs 中心差分） | 142 箇所で最悪 **2.7e-03**（float32 の分解能どおり）。割り当てが切り替わる 8 箇所は比較対象外 |
+| 2 枚固定・40 step・Adam 3e-4 | total 2.256 → **1.520**、box 0.247 → **0.024**、cls 0.144 → **0.038** |
+| 8 枚・80 step・batch 2 | 5.05 → 2.0〜2.7（batch の中身で振れる。フレームごとにプレート 0〜3 枚なので当然） |
+| 速度 | CPU・320px・batch 2 で **約 3.5 秒/step**（MSVC、std::thread の parallel_for） |
+| 学習後の ONNX | `jlpr detect` がそのまま読める（実写の黒ナンバー det 0.93 → 0.98、ただし合成 8 枚に寄せた副作用で誤検出 1 件） |
+
+**dfl 項が 0.70 前後で止まるのは正常**。DFL の下限は目標値のエントロピー（隣接 2 bin に理想的な重みを
+置いたときの CE で、gain 1.5 込みの最大が 1.5·ln2 = 1.04）。**box と cls が落ちているかで判断すること。**
+
+踏んだ罠 / 環境メモ:
+- ultralytics 8.4 の `v8DetectionLoss.__call__` は **3 要素ベクトル**（box/cls/dfl、batch 倍済み）と
+  dict を返す。昔のスカラー戻り値のつもりで `.backward()` すると "grad can be implicitly created only
+  for scalar outputs" で落ちる。パリティ側は `.sum()` してから backward している。
+- **このマシンの MSVC は 14.31**（RESUME が書いていた 14.41 ではない）。`pure/train_ocr.hpp` が
+  `<array>` を include していなくても 14.41 は通るが 14.31 は通らないので include を足した。
+  `CommandLineToArgvW` も自動リンクされないので `build/cc.sh` に `shell32.lib` を明示した。
+- 検出器の ONNX は BN 畳み込み済み（Conv+bias、BatchNormalization ノードなし）なので、
+  学習しているのは畳み込みの重みとバイアスそのもの。BN 統計が動く心配はない代わりに、
+  Ultralytics 側の学習（BN 生きたまま）とは**同じ勾配・同じ損失でも同じ最適化にはならない**。
+
+まだ無いもの: mosaic 等のデータ拡張、EMA / SGD スケジュール / warmup、C++ 側の mAP 評価、
+`--freeze`。本番量（合成 9000 × 28 epoch）は CPU では現実的でないので Python/GPU のままでよい。
 
 ## 合成データのドメインギャップ — 2026-08-19 実測
 
