@@ -427,10 +427,15 @@ static int cmd_train(int argc, char** argv) {
     printf("no data: pass --synth <dir> and/or --alpr <root>\n");
     return 1;
   }
-  if (!dump_loss)
+  if (!dump_loss) {
+    char reg_note[96] = " (region masked)";
+    if (synth_region) snprintf(reg_note, sizeof reg_note, " (region taught for every name)");
+    else if (!uncovered.empty())
+      snprintf(reg_note, sizeof reg_note, " (region taught for the %zu names real data lacks)",
+               uncovered.size());
     printf("synthetic %zu crops%s, real %zu crops (%zu train / %zu hold-out)\n", synth_items.size(),
-           synth_region ? " (region taught)" : " (region masked)", alpr_items.size(),
-           alpr_train.size(), alpr_val.size());
+           reg_note, alpr_items.size(), alpr_train.size(), alpr_val.size());
+  }
 
   std::vector<const std::vector<trn::Item>*> sets;
   std::vector<const std::vector<int>*> pools;
