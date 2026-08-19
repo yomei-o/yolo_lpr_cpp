@@ -51,6 +51,7 @@
     <select id="detsel">
       <option value="pyj">PlateYOLO-JP 320（借り物・車ごと写す用）</option>
       <option value="v8n">自前 yolov8n 320（プレート単体・近接に強い）</option>
+      <option value="v8n640">自前 yolov8n 640（遠くの小さいプレートも／4倍重い）</option>
     </select>
   </label>
   <label>しきい値 <input type="range" id="conf" min="0.05" max="0.60" step="0.05" value="0.30">
@@ -75,7 +76,10 @@ const log = (s) => { const l = $('log'); l.textContent += "\n" + s; l.scrollTop 
 
 const DETECTORS = {
   pyj: { path: '../models/plate_det_pyj320.onnx', kind: 1, label: 'PlateYOLO-JP 320（借り物）' },
-  v8n: { path: '../models/plate_det_v8n_320.onnx', kind: 2, label: '自前 yolov8n 320' },
+  v8n: { path: '../models/plate_det_v8n_320.onnx', kind: 2, label: '自前 yolov8n 320（近接に強い）' },
+  // 640 costs ~4x the detector time but is the only one of the three that finds a plate occupying
+  // ~10% of the frame (measured: bus photo, 320 -> nothing, 640 -> 0.41, borrowed -> 0.80).
+  v8n640: { path: '../models/plate_det_v8n_640.onnx', kind: 2, label: '自前 yolov8n 640（遠景も／重い）' },
 };
 const OCR = '../models/plate_ocr_v2.onnx';
 const CORNER = '../models/plate_corner.onnx';

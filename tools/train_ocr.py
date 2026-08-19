@@ -305,20 +305,19 @@ def main():
     ap.add_argument("--no-extra-heads", dest="no_extra", action="store_true",
                     help="keep the original 9 heads (no plate_kind/legible) — needed when the "
                          "parity test compares against a 9-head ONNX")
+    ap.add_argument("--new-class-bias", dest="new_class_bias", type=float, default=None,
+                    help="initial bias for head classes the source ONNX does not have (region "
+                         "133-137). Default: 0 when synthetic teaches them, -10 when nothing does.")
     ap.add_argument("--dump-loss", dest="dump_loss", action="store_true",
                     help="print only `step N loss X` with a constant lr — what the C++/Python "
                          "training parity test compares")
     a = ap.parse_args()
 
     sp = L.load(a.spec)
-    model = M.PlateNet(sp, extra_heads=not a.no_extra)
-    if a.init and os.path.exists(a.init):
-        M.load_onnx_weights(model, a.init)
-    order = [g.name for g in sp.of_kind("head") if g.name in model.heads]
-    model.to(a.device).train()
 
-    # which regions does the real training split actually contain? (built first: the synthetic sets
-    # need this to know which region classes they are allowed to teach)
+    # Which regions does the real training split actually contain? Answered before anything else: the
+    # synthetic sets need it to know which region classes they may teach, and the model needs it to
+    # decide whether the appended classes start inert (-10) or trainable (0).
     uncovered = set()
     alpr = None
     if a.alpr:
@@ -328,6 +327,13 @@ def main():
         uncovered = {i for i in range(sp.head("region").n) if i not in covered}
         print("real data covers %d of %d regions; synthetic will teach the other %d (incl. the 2025 "
               "additions)" % (len(covered), sp.head("region").n, len(uncovered)))
+
+    model = M.PlateNet(sp, extra_heads=not a.no_extra)
+    if a.init and os.path.exists(a.init):
+        bias = a.new_class_bias if a.new_class_bias is not None else (0.0 if uncovered else -10.0)
+        M.load_onnx_weights(model, a.init, new_class_bias=bias)
+    order = [g.name for g in sp.of_kind("head") if g.name in model.heads]
+    model.to(a.device).train()
 
     sets, weights = [], []
     for d in a.synth:

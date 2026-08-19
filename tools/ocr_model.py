@@ -103,7 +103,7 @@ class PlateNet(nn.Module):
 
 
 # ---- loading the shipped ONNX weights --------------------------------------------------------
-def load_onnx_weights(model, onnx_path, verbose=True):
+def load_onnx_weights(model, onnx_path, verbose=True, new_class_bias=-10.0):
     """Walk the exported graph in forward order and copy Conv/BN/Gemm parameters in.
 
     The graph was written by pure/onnx_export_lpr.hpp in exactly the order this module executes, so
@@ -178,12 +178,15 @@ def load_onnx_weights(model, onnx_path, verbose=True):
             k = min(n_src, n_dst)
             lin.weight[:k].copy_(src_w.t()[:k])
             lin.bias[:k].copy_(torch.from_numpy(bias.copy())[:k])
-            # Appended classes (region 133->138) must start out *losing*. With zero weights and zero
-            # bias their logit is exactly 0.0, which beats every real class whose logit is negative —
-            # measured: that alone cost 6 points of region accuracy (91.7% -> 85.4%) before a single
-            # training step. A large negative bias makes them inert until they are trained.
+            # Appended classes (region 133->138) start out *losing* by default. With zero weights and
+            # zero bias their logit is exactly 0.0, which beats every real class whose logit is
+            # negative — measured: that alone cost 6 points of region accuracy (91.7% -> 85.4%) before
+            # a single training step, so an untrained head must be made inert.
+            # But -10 is a 10-logit debt, and if the class IS trained it has to climb out of that hole
+            # first: 1000 steps of synthetic 江戸川 moved it only from 1e-9 to 1e-7 probability, still
+            # rank 133 of 138. Pass new_class_bias=0 whenever the appended classes get a real gradient.
             if n_dst > k:
-                lin.bias[k:].fill_(-10.0)
+                lin.bias[k:].fill_(new_class_bias)
             loaded.append("%s(%d->%d)" % (name, n_src, n_dst))
     if verbose:
         print("loaded %d CBR blocks and heads: %s" % (len(modules), ", ".join(loaded)))

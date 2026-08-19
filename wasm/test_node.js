@@ -18,6 +18,10 @@ const EXPECT_BOX = (process.env.EXPECT_BOX || '248,414,321,463').split(',').map(
 // 2 = v8 head with cxcywh boxes (a plain Ultralytics export of our own yolov8n), 0 = the old YOLOX
 const DET_KIND = Number(process.env.DET_KIND || 1);
 const DET_PATH = process.env.DET_PATH || path.join(ROOT, 'models', 'plate_det_pyj320.onnx');
+// The demo loads the corner model, so the test has to as well or it exercises a path nobody uses:
+// without it the reading falls back to multi-margin TTA, which on the close-up black plate reads
+// 練馬 instead of 横浜. CORNER_PATH=none turns it off deliberately.
+const CORNER_PATH = process.env.CORNER_PATH || path.join(ROOT, 'models', 'plate_corner.onnx');
 
 function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
 
@@ -47,7 +51,10 @@ function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
   };
   const ocrNodes = load(path.join(ROOT, 'models', 'plate_ocr_v2.onnx'), M._jl_load_ocr);
   const detNodes = load(DET_PATH, M._jl_load_det);
-  console.log('loaded: spec ' + groups + ' groups, ocr ' + ocrNodes + ' nodes, det ' + detNodes + ' nodes');
+  const cornerNodes = (CORNER_PATH !== 'none' && fs.existsSync(CORNER_PATH))
+    ? load(CORNER_PATH, M._jl_load_corner) : 0;
+  console.log('loaded: spec ' + groups + ' groups, ocr ' + ocrNodes + ' nodes, det ' + detNodes
+              + ' nodes, corner ' + cornerNodes + ' nodes');
 
   const raw = fs.readFileSync(fixture);
   const w = raw.readInt32LE(0), h = raw.readInt32LE(4);
