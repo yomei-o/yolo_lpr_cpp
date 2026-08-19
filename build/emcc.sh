@@ -5,8 +5,8 @@
 #   sh build/emcc.sh wasm/jlpr_wasm.cpp -o wasm/jlpr.js
 set -e
 EMSDK="${EMSDK:-/c/prog/emsdk/emsdk}"
-EMCC="$EMSDK/upstream/emscripten/emcc"
-[ -f "$EMCC" ] || { echo "emcc not found at $EMCC — run: cd $EMSDK && ./emsdk install latest"; exit 1; }
+EMCC="$EMSDK/upstream/emscripten/emcc.py"
+[ -f "$EMCC" ] || { echo "emcc.py not found at $EMCC — run: cd $EMSDK && ./emsdk install latest"; exit 1; }
 export EM_CONFIG="$EMSDK/.emscripten"
 
 SRC="$1"; shift
@@ -15,6 +15,7 @@ if [ "$1" = "-o" ]; then OUT="$2"; shift 2; fi
 
 python "$EMCC" -std=c++20 -O3 -msimd128 -Ipure -Ipure/third_party \
   -s MODULARIZE=1 -s EXPORT_NAME=createJlpr -s ALLOW_MEMORY_GROWTH=1 \
-  -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","HEAPU8","HEAPF32"]' \
+  -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","UTF8ToString","stringToUTF8","lengthBytesUTF8","HEAPU8","HEAPF32"]' \
+  -s EXPORTED_FUNCTIONS='["_malloc","_free"]' \
   $EXTRA "$@" "$SRC" -o "$OUT"
 echo "built $OUT"

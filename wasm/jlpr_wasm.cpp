@@ -1,0 +1,100 @@
+// WASM entry point — the whole pipeline in one module: the page fetches the two .onnx files and
+// the label spec, hands over the bytes, then pushes RGBA frames in. Same headers as the CLI, so
+// the browser runs the same graphs and the same decode as `jlpr detect`.
+//
+// build: sh build/emcc.sh wasm/jlpr_wasm.cpp -o wasm/jlpr.js
+#include "spec.hpp"
+#include "pipeline.hpp"
+#include <emscripten/emscripten.h>
+#include <string>
+#include <vector>
+
+static onx::Graph g_det, g_ocr;
+static bool g_det_ok = false, g_ocr_ok = false;
+static spec::Spec g_spec;
+static bool g_spec_ok = false;
+static std::string g_result = "{}";
+
+static std::string json_escape(const std::string& s) {
+  std::string o;
+  for (unsigned char c : s) {
+    if (c == '"' || c == '\\') { o += '\\'; o += (char)c; }
+    else if (c < 0x20) { char b[8]; snprintf(b, sizeof b, "\\u%04x", c); o += b; }
+    else o += (char)c;
+  }
+  return o;
+}
+
+extern "C" {
+
+EMSCRIPTEN_KEEPALIVE int jl_load_det(const unsigned char* buf, int len) {
+  g_det = onx::parse_onnx(buf, (size_t)len);
+  g_det_ok = !g_det.nodes.empty();
+  return g_det_ok ? (int)g_det.nodes.size() : -1;
+}
+
+EMSCRIPTEN_KEEPALIVE int jl_load_ocr(const unsigned char* buf, int len) {
+  g_ocr = onx::parse_onnx(buf, (size_t)len);
+  g_ocr_ok = !g_ocr.nodes.empty();
+  return g_ocr_ok ? (int)g_ocr.nodes.size() : -1;
+}
+
+EMSCRIPTEN_KEEPALIVE int jl_load_spec(const char* text) {
+  g_spec = spec::parse(std::string(text));
+  g_spec_ok = !g_spec.groups.empty();
+  return g_spec_ok ? (int)g_spec.groups.size() : -1;
+}
+
+// Run on an RGBA frame (w*h*4, canvas order). tta=0 reads one crop, 1 reads the margin spread.
+// box_* < 0 means "detect"; otherwise the detector is skipped and that box is read directly
+// (the page's 「枠を手で指定」 path, which is how a hand-held close-up gets read at all).
+EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float conf, int tta,
+                                float bx0, float by0, float bx1, float by1) {
+  if (!g_ocr_ok || !g_spec_ok) { g_result = "{\"error\":\"models not loaded\"}"; return -1; }
+  std::vector<unsigned char> rgb((size_t)w * h * 3);
+  for (size_t i = 0, n = (size_t)w * h; i < n; ++i) {
+    rgb[i * 3 + 0] = rgba[i * 4 + 0];
+    rgb[i * 3 + 1] = rgba[i * 4 + 1];
+    rgb[i * 3 + 2] = rgba[i * 4 + 2];
+  }
+
+  std::vector<jl::Box> boxes;
+  if (bx0 >= 0) {
+    boxes.push_back({bx0, by0, bx1, by1, 1.0f});
+  } else {
+    if (!g_det_ok) { g_result = "{\"error\":\"detector not loaded\"}"; return -1; }
+    jl::DetCfg cfg;
+    cfg.conf = conf;
+    boxes = jl::detect_plates(g_det, rgb.data(), w, h, cfg);
+  }
+
+  std::string o = "{\"plates\":[";
+  for (size_t i = 0; i < boxes.size(); ++i) {
+    const jl::Box& b = boxes[i];
+    jl::Read r = tta ? jl::read_plate_tta(g_ocr, g_spec, rgb.data(), w, h, b.x1, b.y1, b.x2, b.y2)
+                     : jl::read_plate_single(g_ocr, g_spec, rgb.data(), w, h, b.x1, b.y1, b.x2, b.y2);
+    char num[256];
+    snprintf(num, sizeof num, "%s{\"box\":[%.1f,%.1f,%.1f,%.1f],\"det\":%.3f,\"crops\":%d,",
+             i ? "," : "", b.x1, b.y1, b.x2, b.y2, b.score, r.crops);
+    o += num;
+    o += "\"text\":\"" + json_escape(r.plate.text) + "\",";
+    o += "\"region\":\"" + json_escape(r.plate.region) + "\",";
+    o += "\"cls\":\"" + json_escape(r.plate.cls) + "\",";
+    o += "\"hira\":\"" + json_escape(r.plate.hira) + "\",";
+    o += "\"num\":\"" + json_escape(r.plate.disp) + "\",";
+    o += "\"kind\":\"" + json_escape(r.plate.kind) + "\",";
+    o += "\"conf\":[";
+    for (size_t k = 0; k < r.conf.size(); ++k) {
+      snprintf(num, sizeof num, "%s%.4f", k ? "," : "", r.conf[k]);
+      o += num;
+    }
+    o += "]}";
+  }
+  o += "]}";
+  g_result = o;
+  return (int)boxes.size();
+}
+
+EMSCRIPTEN_KEEPALIVE const char* jl_result() { return g_result.c_str(); }
+
+}  // extern "C"
