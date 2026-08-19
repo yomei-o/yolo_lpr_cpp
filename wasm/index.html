@@ -56,6 +56,12 @@
       <option value="v8n640">自前 yolov8n 640（遠くの小さいプレートも／4倍重い）</option>
     </select>
   </label>
+  <label>認識器
+    <select id="ocrsel">
+      <option value="v4">実データ重視（地名 97.9%／2025年の新地名は読めない）</option>
+      <option value="v6">新地名対応（十勝・日光・江戸川・安曇野・南信州を 76%／地名 95.1%）</option>
+    </select>
+  </label>
   <label>しきい値 <input type="range" id="conf" min="0.05" max="0.60" step="0.05" value="0.30">
     <span id="confv">0.30</span></label>
 </div>
@@ -83,7 +89,15 @@ const DETECTORS = {
   // ~10% of the frame (measured: bus photo, 320 -> nothing, 640 -> 0.41, borrowed -> 0.80).
   v8n640: { path: '../models/plate_det_v8n_640.onnx', kind: 2, label: '自前 yolov8n 640（遠景も／重い）' },
 };
-const OCR = '../models/plate_ocr_v4.onnx';   // v2 と同じ実データ精度 97.9% で、言える地名が 3 倍
+// Two recognisers, because the trade-off is real and small enough to let the user pick. Measured on
+// 144 real hold-out crops and 100 synthetic crops of the five names added in 2025:
+//   v4       real 97.9%  new names  1/100   (3 errors, all on names with >=12 training photos)
+//   v6_last  real 95.1%  new names 76/100   (7 errors; 3 of the 4 extra ones are names with <=3 photos,
+//                                            but one is 長崎 -> 大阪, which has 75 photos)
+const OCRS = {
+  v4: { path: '../models/plate_ocr_v4.onnx', label: '実データ重視 (v4)' },
+  v6: { path: '../models/plate_ocr_v6_last.onnx', label: '新地名対応 (v6_last)' },
+};
 const CORNER = '../models/plate_corner.onnx';
 const SPEC = '../spec/labels.txt';
 
@@ -105,10 +119,11 @@ async function boot() {
   ready = false;
   updateButtons();
   const sel = DETECTORS[$('detsel').value];
+  const osel = OCRS[$('ocrsel').value];
   detKind = sel.kind;
-  log('モデルを読み込み中: ' + sel.label + ' + 自前認識器');
+  log('モデルを読み込み中: ' + sel.label + ' + ' + osel.label);
   const [ocr, det, corner, spec] = await Promise.all([
-    fetchMaybe(OCR), fetchMaybe(sel.path), fetchMaybe(CORNER), fetch(SPEC).then((r) => r.text()),
+    fetchMaybe(osel.path), fetchMaybe(sel.path), fetchMaybe(CORNER), fetch(SPEC).then((r) => r.text()),
   ]);
   if (worker) worker.terminate();
   worker = new Worker('worker.js');
@@ -233,6 +248,7 @@ function stopLive() {
 $('btn-run').addEventListener('click', () => { stopLive(); send(false); });
 $('conf').addEventListener('input', () => { $('confv').textContent = (+$('conf').value).toFixed(2); });
 $('detsel').addEventListener('change', () => { stopLive(); boot(); });
+$('ocrsel').addEventListener('change', () => { stopLive(); boot(); });
 
 // ---- drawing -------------------------------------------------------------------------------
 function box(x1, y1, x2, y2, colour, label, sub) {
