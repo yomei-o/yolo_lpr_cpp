@@ -337,6 +337,7 @@ wasm/      jlpr_wasm.cpp + index.html + test_node.js  ✅（カメラ/ファイ�
 | プレート色バイアスの再現は方法依存 | 同じ写真で色だけ変える試験（`tools/recolor_test.py`、陰影を保つ置換）では **白 0.796 / 緑 0.799 / 黄 0.721 / 黒 0.835**。旧 YOLOX でも同じ方法なら 0.80/0.72/0.645/0.720 で、lpr_cpp が報告した黒 0.21 は再現しない | 色バイアスの判定は**実写の黒/黄ナンバー**で行う。合成的な色替えは陰影が残るので簡単すぎる |
 | 自作 ONNX インタプリタの float 誤差 | 認識器 3.3e-05 / 検出器 3e-03（onnxruntime は同じ ONNX で 7.5e-09） | 強い検出には影響しないが、閾値ぎりぎりの box では読みが両実装で割れる。パリティテストの許容幅はそれを前提に設定 |
 | ネガだけのテスト | 灰色一枚で box 0 件 → 検出器が壊れていても通る | 実写フィクスチャで位置・スコアの決定性・散らばりの無さを assert |
+| 合成の指標で採否を決める | 4隅回帰を作り直して合成 val 誤差 1.93% → 1.89% と改善したのに、実写では地名確信度 0.94 → 0.75 と**悪化**（`plate_corner_v2.onnx`、採用せず） | モデルの採否は必ず**実写**で決める。合成の指標は「学習が進んでいるか」までしか言えない |
 | Kaggle 側で `git pull` が中断する | 学習が書いた `models/*.onnx` が未追跡のまま残り、`untracked working tree files would be overwritten by merge` で job が即死（3回踏んだ） | 学習 job の先頭を必ず `git checkout -- models/; git clean -fdq models/; git pull` にする |
 | Ultralytics の ONNX を `simplify=False` で出す | グラフに Shape/Gather が残り、自作インタプリタが `tensor '/model.22/Gather_output_0' is missing` で停止（onnxruntime は読める） | 検出器の export は必ず `simplify=True`（onnxslim が畳んでくれる）。読めるかどうかは **自作ランタイムで実写1枚**流して確認 |
 | 重みの保存先を自分で組み立てる | `project/name/weights/best.pt` を組み立てていたが Ultralytics の settings が runs_dir を前置しており、71 分の学習の**直後に** export だけ FileNotFoundError で落ちた | `model.trainer.best` に聞く。長い学習には `--export-only` のような再開口を用意しておく |
