@@ -44,11 +44,17 @@ inline std::vector<int64_t> attr_ints(const Node& n, const std::string& name) {
 // Run the graph on input x; returns name -> Tensor for every value produced. If `stop` is
 // non-empty, execution halts once all named tensors exist (used to grab per-level detector head
 // outputs and skip a decode tail the 4D engine can't express).
+// `preset` lets a caller supply the initializer tensors instead of having them rebuilt from the
+// graph on every call — that is what makes training possible: the same parameter Tensors persist
+// across steps, so gradients accumulate into them and an optimiser can update them in place.
 inline std::map<std::string, Tensor> run_onnx(const Graph& g, const Tensor& x,
-                                             const std::set<std::string>& stop = {}) {
+                                             const std::set<std::string>& stop = {},
+                                             const std::map<std::string, Tensor>* preset = nullptr,
+                                             bool bn_training = false) {
   std::map<std::string, Tensor> vals;
   std::map<std::string, const IntsTensor*> imap;
-  for (const auto& t : g.init_f) vals[t.name] = from_data(t.dims, t.data);
+  if (preset) vals = *preset;
+  else for (const auto& t : g.init_f) vals[t.name] = from_data(t.dims, t.data);
   for (const auto& t : g.init_i) imap[t.name] = &t;
 
   std::string in_name;                      // the declared input that isn't an initializer
@@ -92,8 +98,9 @@ inline std::map<std::string, Tensor> run_onnx(const Graph& g, const Tensor& x,
     } else if (op == "BatchNormalization") {
       Tensor gamma = get(nd.input[1]), beta = get(nd.input[2]);
       Tensor rm = get(nd.input[3]), rv = get(nd.input[4]);
-      std::vector<float> m = rm->data, v = rv->data;              // eval mode: read-only copies
-      y = batchnorm2d(get(nd.input[0]), gamma, beta, m, v, attr_f(nd, "epsilon", 1e-5f), false, 0.f);
+      std::vector<float> m = rm->data, v = rv->data;              // read-only copies of the stats
+      y = batchnorm2d(get(nd.input[0]), gamma, beta, m, v, attr_f(nd, "epsilon", 1e-5f),
+                      bn_training, 0.f);
     } else if (op == "MaxPool") {
       int64_t k = attr_i0(nd, "kernel_shape", 1), s = attr_i0(nd, "strides", 1), p = attr_i0(nd, "pads", 0);
       y = maxpool2d(get(nd.input[0]), k, s, p);
