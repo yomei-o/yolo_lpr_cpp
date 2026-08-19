@@ -460,6 +460,76 @@ static int cmd_train(int argc, char** argv) {
   return 0;
 }
 
+
+// jlpr val — the C++ side of tools/eval_ocr.py: region top-1 on real crops, per-head + whole-plate on
+// generated ones. Same numbers, same fixed evaluation margin, so a model can be judged without
+// Python anywhere in the loop.
+static int cmd_val(int argc, char** argv) {
+  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v2.onnx");
+  std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
+  std::string data = arg_of(argc, argv, "--data", "");
+  std::string kind = arg_of(argc, argv, "--kind", "alpr");
+  int limit = std::atoi(arg_of(argc, argv, "--limit", "0").c_str());
+  bool holdout = has_flag(argc, argv, "--holdout");
+  if (data.empty()) {
+    printf("usage: jlpr val --data <dir> [--kind alpr|synth] [--ocr onnx] [--limit N] [--holdout]\n");
+    return 1;
+  }
+  spec::Spec sp = spec::load(spec_p);
+  onx::Graph g = onx::load_onnx(ocr_p);
+  onx::Trainable t = onx::make_trainable(g);        // reuse: gives persistent params + head names
+
+  std::vector<trn::Item> items = (kind == "synth") ? trn::read_synth(data, true)
+                                                  : trn::read_alpr(data, sp);
+  if (items.empty()) { printf("no labelled crops under %s (kind=%s)\n", data.c_str(), kind.c_str()); return 1; }
+  std::vector<int> idxs;
+  if (kind == "alpr" && holdout) {
+    std::vector<int> tr;
+    trn::split_holdout(items.size(), 0.2, tr, idxs);   // the same split the trainer uses
+  } else {
+    for (size_t i = 0; i < items.size(); ++i) idxs.push_back((int)i);
+  }
+  if (limit > 0 && (int)idxs.size() > limit) idxs.resize((size_t)limit);
+
+  size_t nheads = t.heads.size();
+  std::vector<int> per_head(nheads, 0);
+  int n = 0, full_ok = 0;
+  double conf_sum = 0;
+  for (int id : idxs) {
+    const trn::Item& it = items[(size_t)id];
+    std::vector<float> v = trn::load_input(it, trn::EVAL_MARGIN);
+    Tensor x = from_data({1, 3, 128, 128}, v);
+    auto vals = onx::run_onnx(g, x);
+    bool all = true;
+    for (size_t h = 0; h < nheads; ++h) {
+      const std::vector<float>& p = vals.at(t.heads[h])->data;
+      int best = 0;
+      double tot = 0;
+      for (size_t i = 0; i < p.size(); ++i) { tot += p[i]; if (p[i] > p[best]) best = (int)i; }
+      bool ok = (it.mask[h] > 0.5f) ? (best == it.heads[h]) : true;
+      if (it.mask[h] > 0.5f) per_head[h] += ok ? 1 : 0;
+      if (h < 9 && it.mask[h] > 0.5f) all = all && ok;
+      if (h == 0) conf_sum += tot > 0 ? p[best] / tot : 0;
+    }
+    full_ok += all ? 1 : 0;
+    ++n;
+    if (n % 200 == 0) { printf("  %d/%zu\n", n, idxs.size()); fflush(stdout); }
+  }
+  printf("\n%s: %d crops from %s (margin %.2f, no TTA)\n", ocr_p.c_str(), n, data.c_str(),
+         trn::EVAL_MARGIN);
+  if (kind == "alpr") {
+    printf("region top1 %.1f%%   mean region confidence %.3f%s\n", 100.0 * per_head[0] / std::max(1, n),
+           conf_sum / std::max(1, n), holdout ? "   (hold-out split)" : "");
+  } else {
+    printf("whole plate %.1f%%\n", 100.0 * full_ok / std::max(1, n));
+    printf("per head:");
+    for (size_t h = 0; h < nheads && h < 9; ++h)
+      printf(" %s %.0f%%", t.heads[h].substr(0, 6).c_str(), 100.0 * per_head[h] / std::max(1, n));
+    printf("\n");
+  }
+  return 0;
+}
+
 static int cmd_labels(int argc, char** argv) {
   std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
   spec::Spec sp = spec::load(spec_path);
@@ -699,6 +769,7 @@ int main(int argc, char** argv) {
   if (cmd == "gen") return cmd_gen(argc, argv);
   if (cmd == "gen-det") return cmd_gen_det(argc, argv);
   if (cmd == "train") return cmd_train(argc, argv);
+  if (cmd == "val") return cmd_val(argc, argv);
   printf("jlpr: '%s' is not implemented yet\n", cmd.c_str());
   return 1;
 }
