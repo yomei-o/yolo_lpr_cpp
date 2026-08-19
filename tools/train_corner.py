@@ -73,14 +73,19 @@ class CornerSet:
     def __len__(self):
         return len(self.items)
 
-    def batch(self, n, rng, jitter=0.04, pool=None):
+    def batch(self, n, rng, jitter=0.04, pool=None, expand_lo=0.05, expand_hi=0.45):
         plan = []
         for _ in range(n):
             i = rng.below(len(self.items))
-            plan.append((i, [rng.range(-jitter, jitter) for _ in range(4)] if jitter else None))
+            j = [rng.range(-jitter, jitter) for _ in range(4)] if jitter else None
+            # The *expansion* is jittered too, wide: with a fixed 25% the net only ever sees plates
+            # surrounded by real background, and it then fails on an already-tight crop (measured:
+            # rectifying pre-cropped alpr_jp plates dropped region accuracy 92.7% -> 83.3%).
+            e = rng.range(expand_lo, expand_hi)
+            plan.append((i, j, e))
         # the jitter draws happen above so the rng order does not depend on threading
         def load(job):
-            i, j = job
+            i, j, e = job
             path, corners = self.items[i]
             rgb = I.load_rgb(path)
             xs, ys = corners[0::2], corners[1::2]
@@ -89,7 +94,6 @@ class CornerSet:
             if j:
                 x0 += bw * j[0]; x1 += bw * j[1]; y0 += bh * j[2]; y1 += bh * j[3]
                 bw, bh = max(1e-3, x1 - x0), max(1e-3, y1 - y0)
-            e = C.BOX_EXPAND
             cx0, cy0, cx1, cy1 = x0 - bw * e, y0 - bh * e, x1 + bw * e, y1 + bh * e
             g = np.arange(C.IN_PX, dtype=np.float32) + 0.5
             sx = cx0 + g * (cx1 - cx0) / C.IN_PX - 0.5
@@ -113,7 +117,7 @@ def evaluate(model, ds, device, n=400, seed=9):
     rng = Rng(seed)
     errs = []
     for _ in range(max(1, n // 32)):
-        x, y = ds.batch(32, rng, jitter=0.04)
+        x, y = ds.batch(32, rng, jitter=0.04, expand_lo=C.BOX_EXPAND, expand_hi=C.BOX_EXPAND)
         p = model(x.to(device)).cpu()
         # error per corner, as a fraction of the plate width (the plate spans 1/(1+2e) of the crop)
         d = (p - y).view(-1, 4, 2)
@@ -129,7 +133,9 @@ def main():
     ap.add_argument("--val", default="")
     ap.add_argument("--steps", type=int, default=2000)
     ap.add_argument("--batch", type=int, default=64)
-    ap.add_argument("--lr", type=float, default=2e-3)
+    ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--expand-lo", dest="expand_lo", type=float, default=0.05)
+    ap.add_argument("--expand-hi", dest="expand_hi", type=float, default=0.45)
     ap.add_argument("--width", type=int, default=24)
     ap.add_argument("--workers", type=int, default=0)
     ap.add_argument("--eval-every", dest="eval_every", type=int, default=250)
@@ -156,11 +162,12 @@ def main():
         lr = a.lr * min(1.0, step / 100.0) * (0.5 * (1 + math.cos(math.pi * step / a.steps)))
         for g in opt.param_groups:
             g["lr"] = lr
-        x, y = train.batch(a.batch, rng, 0.04, pool)
+        x, y = train.batch(a.batch, rng, 0.04, pool, a.expand_lo, a.expand_hi)
         pred = model(x.to(a.device))
         loss = F.smooth_l1_loss(pred, y.to(a.device), beta=0.02)
         opt.zero_grad(set_to_none=True)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)   # run 2 diverged to 240% without this
         opt.step()
         lv = loss.detach().item()
         run = lv if run is None else 0.9 * run + 0.1 * lv
