@@ -158,6 +158,244 @@ inline Batch make_batch(const std::vector<Item>& items, const std::vector<int>& 
   return out;
 }
 
+// ---- augmentation ------------------------------------------------------------------------------
+// The same set tools/train_det.py asks Ultralytics for (mosaic 1.0, fliplr 0.5, degrees 5, scale 0.6,
+// translate 0.15, hsv 0.015/0.6/0.4, close_mosaic 10), rebuilt here. Without it the C++ trainer can
+// only re-fit the generator's framing; with it a run in either language sees the same *kinds* of
+// variation under the same knob names.
+//
+// This is deliberately NOT bit-parity with Ultralytics' pipeline — their draw order and their warp
+// are theirs, and augmentation is random anyway, so pinning it would prove nothing. What IS pinned
+// is the loss (tools/parity/train_det.py, 3e-06).
+struct AugCfg {
+  float mosaic = 1.0f;        // probability a sample is built from 4 images on a 2S canvas
+  float fliplr = 0.5f;
+  float degrees = 5.0f;       // rotation, +-deg
+  float translate = 0.15f;    // fraction of the output size
+  float scale = 0.6f;         // scale factor drawn from 1 +- this
+  float hsv_h = 0.015f, hsv_s = 0.6f, hsv_v = 0.4f;
+};
+
+// Everything random about one sample, drawn before any pixel is touched, so the image work can run
+// in parallel without changing a single number (the same plan/load split as the corner trainer).
+struct AugPlan {
+  bool mosaic = false;
+  int src[4] = {0, 0, 0, 0};
+  float xc = 0, yc = 0;              // mosaic centre in canvas pixels
+  float angle = 0, scale = 1, tx = 0, ty = 0;
+  bool flip = false;
+  float hg = 1, sg = 1, vg = 1;      // hsv gains (multiplicative, as in augment_hsv)
+};
+
+inline AugPlan draw_plan(Rng& rng, size_t n_items, int self_idx, int S, const AugCfg& a,
+                         bool mosaic_on) {
+  AugPlan p;
+  p.src[0] = self_idx;
+  p.mosaic = mosaic_on && a.mosaic > 0 && rng.unit() < a.mosaic;
+  if (p.mosaic) {
+    for (int k = 1; k < 4; ++k) p.src[k] = (int)rng.below((uint64_t)n_items);
+    p.xc = (float)rng.range(0.5 * S, 1.5 * S);
+    p.yc = (float)rng.range(0.5 * S, 1.5 * S);
+  }
+  p.angle = (float)rng.range(-a.degrees, a.degrees);
+  p.scale = (float)rng.range(1.0 - a.scale, 1.0 + a.scale);
+  p.tx = (float)rng.range(0.5 - a.translate, 0.5 + a.translate) * S;
+  p.ty = (float)rng.range(0.5 - a.translate, 0.5 + a.translate) * S;
+  p.flip = rng.unit() < a.fliplr;
+  p.hg = 1.f + (float)rng.range(-1, 1) * a.hsv_h;
+  p.sg = 1.f + (float)rng.range(-1, 1) * a.hsv_s;
+  p.vg = 1.f + (float)rng.range(-1, 1) * a.hsv_v;
+  return p;
+}
+
+inline float bl_sample(const unsigned char* rgb, int W, int H, float sx, float sy, int c) {
+  const int xi = (int)std::floor(sx), yi = (int)std::floor(sy);
+  const float fx = sx - xi, fy = sy - yi;
+  auto px = [&](int yy, int xx) {
+    yy = std::min(std::max(yy, 0), H - 1);
+    xx = std::min(std::max(xx, 0), W - 1);
+    return (float)rgb[((size_t)yy * W + xx) * 3 + c];
+  };
+  return px(yi, xi) * (1 - fx) * (1 - fy) + px(yi, xi + 1) * fx * (1 - fy)
+       + px(yi + 1, xi) * (1 - fx) * fy + px(yi + 1, xi + 1) * fx * fy;
+}
+
+struct Canvas {
+  std::vector<unsigned char> rgb;
+  int W = 0, H = 0;
+  std::vector<std::array<float, 5>> boxes;      // cls, x1, y1, x2, y2 in canvas pixels
+};
+
+// Decode one item and paste it, ratio kept, so its long side is `side`, with its top-left at (ox,oy).
+inline void paste_into(const Item& it, Canvas& c, int side, int ox, int oy) {
+  int W = 0, H = 0, C = 0;
+  std::vector<unsigned char> blob = trn::read_file(it.img);
+  unsigned char* im = blob.empty() ? nullptr
+                                   : stbi_load_from_memory(blob.data(), (int)blob.size(), &W, &H, &C, 3);
+  if (!im) return;
+  const float r = (float)side / (float)std::max(W, H);
+  const int nw = std::max(1, (int)std::lround(W * r)), nh = std::max(1, (int)std::lround(H * r));
+  for (int y = 0; y < nh; ++y) {
+    const int cy = oy + y;
+    if (cy < 0 || cy >= c.H) continue;
+    const float sy = (y + 0.5f) * H / nh - 0.5f;
+    for (int x = 0; x < nw; ++x) {
+      const int cx = ox + x;
+      if (cx < 0 || cx >= c.W) continue;
+      const float sx = (x + 0.5f) * W / nw - 0.5f;
+      for (int ch = 0; ch < 3; ++ch)
+        c.rgb[((size_t)cy * c.W + cx) * 3 + ch] =
+            (unsigned char)std::lround(std::min(255.f, std::max(0.f, bl_sample(im, W, H, sx, sy, ch))));
+    }
+  }
+  stbi_image_free(im);
+  for (const Box5& g : it.boxes) {
+    const float bx = g.cx * nw + ox, by = g.cy * nh + oy, bw = g.w * nw, bh = g.h * nh;
+    c.boxes.push_back({(float)g.cls, bx - bw / 2, by - bh / 2, bx + bw / 2, by + bh / 2});
+  }
+}
+
+inline void rgb_to_hsv(float r, float g, float b, float& h, float& s, float& v) {
+  const float mx = std::max(r, std::max(g, b)), mn = std::min(r, std::min(g, b));
+  v = mx;
+  const float d = mx - mn;
+  s = mx <= 0 ? 0.f : d / mx;
+  if (d <= 0) { h = 0; return; }
+  if (mx == r)      h = 60.f * std::fmod((g - b) / d, 6.f);
+  else if (mx == g) h = 60.f * ((b - r) / d + 2.f);
+  else              h = 60.f * ((r - g) / d + 4.f);
+  if (h < 0) h += 360.f;
+}
+
+inline void hsv_to_rgb(float h, float s, float v, float& r, float& g, float& b) {
+  const float c = v * s, x = c * (1.f - std::fabs(std::fmod(h / 60.f, 2.f) - 1.f)), m = v - c;
+  float rr = 0, gg = 0, bb = 0;
+  if (h < 60)       { rr = c; gg = x; }
+  else if (h < 120) { rr = x; gg = c; }
+  else if (h < 180) { gg = c; bb = x; }
+  else if (h < 240) { gg = x; bb = c; }
+  else if (h < 300) { rr = x; bb = c; }
+  else              { rr = c; bb = x; }
+  r = rr + m; g = gg + m; b = bb + m;
+}
+
+// One augmented sample: canvas (1 or 4 images) -> rotate/scale/translate into SxS -> hsv -> flip.
+// Boxes ride along through the same affine and are dropped by Ultralytics' box_candidates rule
+// (side >= 2px, aspect <= 100, at least 10% of the pre-warp area left).
+inline void build_sample(const std::vector<Item>& items, const AugPlan& p, int S, const AugCfg& aug,
+                         float* out_x, std::vector<std::array<float, 5>>& out_gt) {
+  (void)aug;
+  Canvas c;
+  if (p.mosaic) {
+    c.W = c.H = 2 * S;
+    c.rgb.assign((size_t)c.W * c.H * 3, (unsigned char)114);
+    const int half = S;                                  // each tile's long side
+    const int ox[4] = {(int)p.xc - half, (int)p.xc, (int)p.xc - half, (int)p.xc};
+    const int oy[4] = {(int)p.yc - half, (int)p.yc - half, (int)p.yc, (int)p.yc};
+    for (int k = 0; k < 4; ++k) paste_into(items[(size_t)p.src[k]], c, half, ox[k], oy[k]);
+  } else {
+    c.W = c.H = S;
+    c.rgb.assign((size_t)c.W * c.H * 3, (unsigned char)114);
+    paste_into(items[(size_t)p.src[0]], c, S, 0, 0);
+  }
+
+  // forward affine: out = R(angle,scale) * (in - centre) + (tx,ty)
+  const float rad = p.angle * 3.14159265358979f / 180.f;
+  const float ca = std::cos(rad) * p.scale, sa = std::sin(rad) * p.scale;
+  const float cxx = c.W * 0.5f, cyy = c.H * 0.5f;
+  auto fwd = [&](float x, float y, float& ox2, float& oy2) {
+    const float dx = x - cxx, dy = y - cyy;
+    ox2 = ca * dx - sa * dy + p.tx;
+    oy2 = sa * dx + ca * dy + p.ty;
+  };
+  // inverse, for sampling the source at each output pixel
+  const float inv = 1.f / (p.scale * p.scale);
+  auto bwd = [&](float x, float y, float& sx, float& sy) {
+    const float dx = x - p.tx, dy = y - p.ty;
+    sx = cxx + (ca * dx + sa * dy) * inv;
+    sy = cyy + (-sa * dx + ca * dy) * inv;
+  };
+
+  std::vector<unsigned char> warped((size_t)S * S * 3, (unsigned char)114);
+  for (int y = 0; y < S; ++y)
+    for (int x = 0; x < S; ++x) {
+      float sx = 0, sy = 0;
+      bwd(x + 0.5f, y + 0.5f, sx, sy);
+      sx -= 0.5f; sy -= 0.5f;
+      if (sx < -1 || sy < -1 || sx > c.W || sy > c.H) continue;      // outside: stays 114
+      for (int ch = 0; ch < 3; ++ch)
+        warped[((size_t)y * S + x) * 3 + ch] =
+            (unsigned char)std::lround(std::min(255.f, std::max(0.f, bl_sample(c.rgb.data(), c.W, c.H, sx, sy, ch))));
+    }
+
+  out_gt.clear();
+  for (const std::array<float, 5>& b : c.boxes) {
+    float xs[4], ys[4];
+    fwd(b[1], b[2], xs[0], ys[0]);
+    fwd(b[3], b[2], xs[1], ys[1]);
+    fwd(b[3], b[4], xs[2], ys[2]);
+    fwd(b[1], b[4], xs[3], ys[3]);
+    float x1 = xs[0], x2 = xs[0], y1 = ys[0], y2 = ys[0];
+    for (int k = 1; k < 4; ++k) {
+      x1 = std::min(x1, xs[k]); x2 = std::max(x2, xs[k]);
+      y1 = std::min(y1, ys[k]); y2 = std::max(y2, ys[k]);
+    }
+    const float w0 = (b[3] - b[1]) * p.scale, h0 = (b[4] - b[2]) * p.scale;
+    x1 = std::max(0.f, x1); y1 = std::max(0.f, y1);
+    x2 = std::min((float)S, x2); y2 = std::min((float)S, y2);
+    const float w = x2 - x1, h = y2 - y1;
+    if (w < 2 || h < 2) continue;                                    // box_candidates: wh_thr
+    if (w / std::max(h, 1e-6f) > 100.f || h / std::max(w, 1e-6f) > 100.f) continue;   // ar_thr
+    if (w * h < 0.1f * w0 * h0) continue;                            // area_thr
+    out_gt.push_back({b[0], x1, y1, x2, y2});
+  }
+
+  const bool do_hsv = (p.hg != 1.f || p.sg != 1.f || p.vg != 1.f);
+  for (int y = 0; y < S; ++y)
+    for (int x = 0; x < S; ++x) {
+      const int sx = p.flip ? (S - 1 - x) : x;                       // fliplr
+      float r = warped[((size_t)y * S + sx) * 3 + 0] / 255.f;
+      float g = warped[((size_t)y * S + sx) * 3 + 1] / 255.f;
+      float b = warped[((size_t)y * S + sx) * 3 + 2] / 255.f;
+      if (do_hsv) {
+        float h = 0, s = 0, v = 0;
+        rgb_to_hsv(r, g, b, h, s, v);
+        h = std::fmod(h * p.hg, 360.f);
+        if (h < 0) h += 360.f;
+        s = std::min(1.f, std::max(0.f, s * p.sg));
+        v = std::min(1.f, std::max(0.f, v * p.vg));
+        hsv_to_rgb(h, s, v, r, g, b);
+      }
+      out_x[(size_t)(0 * S + y) * S + x] = r;
+      out_x[(size_t)(1 * S + y) * S + x] = g;
+      out_x[(size_t)(2 * S + y) * S + x] = b;
+    }
+  if (p.flip)
+    for (std::array<float, 5>& b : out_gt) {
+      const float x1 = b[1], x2 = b[3];
+      b[1] = (float)S - x2;
+      b[3] = (float)S - x1;
+    }
+}
+
+// Augmented batch. `mosaic_on` is false for the last `close_mosaic` fraction of a run, exactly as
+// Ultralytics' close_mosaic does: the final steps should see the real framing, not 4-way collages.
+inline Batch make_batch_aug(const std::vector<Item>& items, const std::vector<int>& idx, int S,
+                            Rng& rng, const AugCfg& aug, bool mosaic_on) {
+  const int64_t B = (int64_t)idx.size();
+  std::vector<AugPlan> plans((size_t)B);
+  for (int64_t b = 0; b < B; ++b)
+    plans[(size_t)b] = draw_plan(rng, items.size(), idx[(size_t)b], S, aug, mosaic_on);
+  Batch out;
+  out.x = make_tensor({B, 3, S, S}, false);
+  out.gts.resize((size_t)B);
+  parallel_for(B, [&](int64_t b) {
+    build_sample(items, plans[(size_t)b], S, aug, out.x->data.data() + (size_t)b * 3 * S * S,
+                 out.gts[(size_t)b]);
+  });
+  return out;
+}
+
 // ---- finding the head tensors in an exported graph ---------------------------------------------
 // Structural, not by name: the inference tail is Reshape(box_l) -> Concat -> Reshape -> Transpose ->
 // Softmax (the DFL) for the boxes, and Reshape(cls_l) -> Concat -> Sigmoid for the classes. Walking

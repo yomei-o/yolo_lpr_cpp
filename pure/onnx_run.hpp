@@ -147,7 +147,9 @@ inline std::map<std::string, Tensor> run_onnx(const Graph& g, const Tensor& x,
       y = maxpool2d(get(nd.input[0]), k, s, p);
     } else if (op == "Resize") {
       Tensor sc = vals.count(nd.input.back()) ? get(nd.input.back()) : nullptr;
-      int64_t f = (sc && sc->numel() >= 4) ? (int64_t)sc->data[2] : 2;
+      // llround, not a cast: a scale that arrives as 1.9999996 (see the weight_initializers note in
+      // onnx_train.hpp) would truncate to 1 and silently unbuild the neck.
+      int64_t f = (sc && sc->numel() >= 4) ? (int64_t)std::llround(sc->data[2]) : 2;
       y = upsample_nearest(get(nd.input[0]), f);
     } else if (op == "Concat") {
       std::vector<Tensor> xs;
