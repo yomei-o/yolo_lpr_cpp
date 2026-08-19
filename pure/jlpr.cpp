@@ -18,6 +18,8 @@
 #include "pipeline.hpp"
 #include "gen_render.hpp"
 #include "gen_det.hpp"
+#include "onnx_train.hpp"
+#include "train_ocr.hpp"
 #include <filesystem>
 #ifdef _OPENMP
 #include <omp.h>
@@ -301,6 +303,122 @@ static int cmd_gen_det(int argc, char** argv) {
   return 0;
 }
 
+
+// jlpr train --model ocr — fine-tune the recognizer ONNX in place (see pure/train_ocr.hpp).
+static int cmd_train(int argc, char** argv) {
+  std::string model = arg_of(argc, argv, "--model", "ocr");
+  if (model != "ocr") { printf("jlpr train: only --model ocr is implemented (M5)\n"); return 1; }
+  std::string onnx_in = arg_of(argc, argv, "--init", "models/plate_ocr.onnx");
+  std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
+  std::string synth = arg_of(argc, argv, "--synth", "");
+  std::string alpr = arg_of(argc, argv, "--alpr", "");
+  std::string out = arg_of(argc, argv, "--export", "");
+  int steps = std::atoi(arg_of(argc, argv, "--steps", "100").c_str());
+  int batch = std::atoi(arg_of(argc, argv, "--batch", "8").c_str());
+  float lr = (float)atof(arg_of(argc, argv, "--lr", "3e-4").c_str());
+  float bb_mult = (float)atof(arg_of(argc, argv, "--backbone-lr-mult", "0.1").c_str());
+  double real_w = atof(arg_of(argc, argv, "--real-weight", "0.35").c_str());
+  int eval_every = std::atoi(arg_of(argc, argv, "--eval-every", "0").c_str());
+  int eval_limit = std::atoi(arg_of(argc, argv, "--eval-limit", "144").c_str());
+  uint64_t seed = strtoull(arg_of(argc, argv, "--seed", "1234").c_str(), nullptr, 10);
+  bool synth_region = has_flag(argc, argv, "--synth-region");
+  bool dump_loss = has_flag(argc, argv, "--dump-loss");   // parity: print the per-step loss only
+
+  spec::Spec sp = spec::load(spec_path);
+  onx::Graph g = onx::load_onnx(onnx_in);
+  onx::Trainable t = onx::make_trainable(g);
+  if (!dump_loss)
+    printf("%s: %zu trainable tensors, %zu parameters, %zu heads\n", onnx_in.c_str(),
+           t.params.size(), onx::param_count(t), t.heads.size());
+
+  std::vector<trn::Item> synth_items, alpr_items;
+  std::vector<int> alpr_train, alpr_val;
+  if (!synth.empty()) synth_items = trn::read_synth(synth, synth_region);
+  if (!alpr.empty()) {
+    alpr_items = trn::read_alpr(alpr, sp);
+    trn::split_holdout(alpr_items.size(), 0.2, alpr_train, alpr_val);
+  }
+  if (synth_items.empty() && alpr_items.empty()) {
+    printf("no data: pass --synth <dir> and/or --alpr <root>\n");
+    return 1;
+  }
+  if (!dump_loss)
+    printf("synthetic %zu crops%s, real %zu crops (%zu train / %zu hold-out)\n", synth_items.size(),
+           synth_region ? " (region taught)" : " (region masked)", alpr_items.size(),
+           alpr_train.size(), alpr_val.size());
+
+  std::vector<const std::vector<trn::Item>*> sets;
+  std::vector<const std::vector<int>*> pools;
+  std::vector<double> weights;
+  std::vector<std::pair<double, double>> margins;
+  if (!synth_items.empty()) {
+    sets.push_back(&synth_items); pools.push_back(nullptr);
+    weights.push_back(1.0 - real_w); margins.push_back({-0.03, 0.12});
+  }
+  if (!alpr_items.empty()) {
+    sets.push_back(&alpr_items); pools.push_back(&alpr_train);
+    weights.push_back(real_w); margins.push_back({-0.02, 0.10});
+  }
+
+  // head tensors get lr, the pretrained backbone gets lr*mult (same split as the Python trainer)
+  std::vector<Tensor> head_params, bb_params;
+  for (size_t i = 0; i < t.params.size(); ++i) {
+    const std::string& n = t.param_names[i];
+    (n.rfind("head", 0) == 0 ? head_params : bb_params).push_back(t.params[i]);
+  }
+  Adam opt_head(head_params, lr), opt_bb(bb_params, lr * bb_mult);
+  if (!dump_loss)
+    printf("param groups: %zu head tensors at lr, %zu backbone tensors at lr*%.2f, BN stats frozen\n",
+           head_params.size(), bb_params.size(), bb_mult);
+
+  size_t region_head = 0;
+  for (size_t h = 0; h < t.heads.size(); ++h)
+    if (t.heads[h].rfind("region", 0) == 0) region_head = h;
+
+  if (!alpr_val.empty() && !dump_loss) {
+    int n = 0;
+    double acc = trn::eval_region(t, alpr_items, alpr_val, region_head, 0, &n);
+    printf("step 0 (this ONNX): real hold-out region top1 %.1f%% over %d crops\n", 100 * acc, n);
+  }
+
+  Rng rng(seed);
+  double run_loss = -1;
+  for (int step = 1; step <= steps; ++step) {
+    float cur = step <= 1 ? lr : lr;                        // constant lr keeps the parity simple
+    opt_head.lr = cur;
+    opt_bb.lr = cur * bb_mult;
+    trn::Batch b = trn::make_batch(sets, pools, weights, margins, batch, rng);
+    auto vals = onx::forward(t, b.x);
+    Tensor loss = onx::multihead_ce(vals, t, b.labels, b.mask);
+    if (!loss) continue;
+    for (Tensor& p : t.params) std::fill(p->grad.begin(), p->grad.end(), 0.f);
+    backward(loss);
+    opt_head.step();
+    opt_bb.step();
+    double lv = loss->data[0];
+    run_loss = run_loss < 0 ? lv : 0.9 * run_loss + 0.1 * lv;
+    free_graph(loss);
+    if (dump_loss) printf("step %d loss %.6f\n", step, lv);
+    else if (step % 5 == 0 || step == 1) printf("  step %4d/%d  loss %7.3f\n", step, steps, run_loss);
+    if (!dump_loss && eval_every && step % eval_every == 0 && !alpr_val.empty()) {
+      int n = 0;
+      double acc = trn::eval_region(t, alpr_items, alpr_val, region_head, eval_limit, &n);
+      printf("  eval @%d: real region %.1f%% (%d)\n", step, 100 * acc, n);
+    }
+  }
+  if (!alpr_val.empty() && !dump_loss) {
+    int n = 0;
+    double acc = trn::eval_region(t, alpr_items, alpr_val, region_head, 0, &n);
+    printf("final: real hold-out region top1 %.1f%% over %d crops\n", 100 * acc, n);
+  }
+  if (!out.empty()) {
+    onx::write_back(t);
+    onx::save_onnx(t.g, out);
+    printf("wrote %s\n", out.c_str());
+  }
+  return 0;
+}
+
 static int cmd_labels(int argc, char** argv) {
   std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
   spec::Spec sp = spec::load(spec_path);
@@ -508,6 +626,7 @@ int main(int argc, char** argv) {
   if (cmd == "rgba") return cmd_rgba(argc, argv);
   if (cmd == "gen") return cmd_gen(argc, argv);
   if (cmd == "gen-det") return cmd_gen_det(argc, argv);
+  if (cmd == "train") return cmd_train(argc, argv);
   printf("jlpr: '%s' is not implemented yet\n", cmd.c_str());
   return 1;
 }
