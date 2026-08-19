@@ -175,7 +175,11 @@ box が良くなるだけで地域名の信頼度が 0.57 → 0.92 に動く。*
 | 合成データ生成 | `gen.py` | `gen.cpp` | 同じ seed で**文字列・4隅・変換パラメータ・色・種別が完全一致**。画像はラスタライザ差（PIL/FreeType vs stb_truetype）が出るので、一致は幾何とラベルまでとし、画像は統計と目視で同等を確認 |
 | 学習（認識器） | `train_ocr.py`（PyTorch 移植、ONNX 重み読み込み） ✅ | `jlpr train`（**ONNX グラフを直接学習**） ✅ | 同じ ONNX・同じ seed・同じ batch で **step1 の loss 差 1e-6**、以降は相対 1% 以内（実測、`tools/parity/train.py`） |
 | 学習（検出器） | `train_det.py`（Ultralytics） ✅ | yolov8_cpp の v8 loss / TAL 移植が必要（M7b） | 同上の方式で比較する予定 |
-| 学習（4隅） | M6 | M6 | — |
+| 学習（4隅） | `train_corner.py` ✅ | `jlpr train --model corner`（未実装） | 唯一まだ Python 専用。合成 corners.txt をそのまま使うので移植は素直 |
+| head の拡張（地名 133→138） | `ocr_model.py` の重み読み込み時 ✅ | `onx::widen_heads` ✅ | 同じ ONNX から始めて**学習前の精度が一致**（追加クラス bias -10 で 92.4%、0 で 85.4%） |
+| チェックポイント選択 | `--export` / `--export-balanced` / `--export-last` ✅ | 同じ 3 フラグ ✅ | 実データ最良／実データを 1pt 以内に抑えて合成地名最大／最終step。選択規則が同一 |
+| 生成の地名指定 | `--region <n>\|sweep\|a-b` ✅ | 同じ ✅ | labels/meta がバイト一致（`--region sweep` で確認） |
+| 書体集合の固定 | `--fonts-strict` ✅ | 同じ ✅ | `spec/fonts.txt` の 2 書体だけで生成し、どのマシンでも同じ画になる |
 | 推論 | `infer.py`（onnxruntime） ✅ | 自前 ONNX ランナ ✅ | 同一画像で**同一文字列・同一 argmax**、box 差 0.10px / det 差 0.0000（実測）。自作側の float 加算誤差は認識器 3.3e-05・検出器 3e-03 なので、閾値ぎりぎりの box は割れる |
 | 評価（mAP / 全文一致 / 色別内訳） | `eval.py` | `jlpr val` | 同じデータセットで**同じ数値**（mAP は 1e-3 以内） |
 | ONNX 出力 | `torch.onnx.export` | 自前エクスポータ | 出力 ONNX を相互に読み込んで **forward が 1e-5 以内** |
