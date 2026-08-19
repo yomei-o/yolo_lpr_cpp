@@ -147,9 +147,9 @@ inline std::string det_meta(const std::string& file, const DetSample& d, const s
   out += b;
   for (size_t k = 0; k < d.plates.size(); ++k) {
     const DetPlate& pl = d.plates[k];
-    snprintf(b, sizeof b, "  %zu share=%.4f cx=%.4f cy=%.4f keep=%d text=%s kind=%s\n", k, pl.share,
-             pl.cx, pl.cy, pl.keep ? 1 : 0, plate_text(pl.p, sp).c_str(),
-             sp.head("plate_kind").tok[pl.p.kind].c_str());
+    snprintf(b, sizeof b, "  %zu share=%.4f cx=%.4f cy=%.4f keep=%d real=%d ridx=%d text=%s kind=%s\n",
+             k, pl.share, pl.cx, pl.cy, pl.keep ? 1 : 0, pl.use_real ? 1 : 0, pl.real_idx,
+             plate_text(pl.p, sp).c_str(), sp.head("plate_kind").tok[pl.p.kind].c_str());
     out += b;
   }
   return out;

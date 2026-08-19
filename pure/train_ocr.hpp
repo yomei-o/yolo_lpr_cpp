@@ -109,6 +109,21 @@ inline std::vector<std::string> list_dir(const std::string& dir, bool want_dirs)
   return out;
 }
 
+// Recursive image listing that survives Japanese paths. std::filesystem on mingw converts char
+// paths through the ANSI code page and throws "Illegal byte sequence" on 自家用/ — so the whole
+// project lists directories through list_dir() (wide API on Windows) instead.
+inline void list_images_recursive(const std::string& dir, std::vector<std::string>& out, int depth = 0) {
+  if (depth > 6) return;
+  for (const std::string& f : list_dir(dir, false)) {
+    std::string low = f;
+    for (char& c : low) c = (char)tolower(c);
+    if ((low.size() > 4 && (low.rfind(".jpg") == low.size() - 4 || low.rfind(".png") == low.size() - 4)) ||
+        (low.size() > 5 && low.rfind(".jpeg") == low.size() - 5))
+      out.push_back(dir + "/" + f);
+  }
+  for (const std::string& d : list_dir(dir, true)) list_images_recursive(dir + "/" + d, out, depth + 1);
+}
+
 // A generated directory: labels.txt (11 indices) + corners.txt (the true plate box).
 inline std::vector<Item> read_synth(const std::string& root, bool teach_region) {
   std::vector<Item> items;

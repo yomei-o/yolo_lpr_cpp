@@ -32,7 +32,7 @@ class DetSample(object):
     pass
 
 
-def sample_det(rng, sp, n_bg, n_fonts):
+def sample_det(rng, sp, n_bg, n_fonts, n_real=0, real_pct=0):
     """Mirror of gen::sample_det — draw order is the contract (spec/gen.md, detection section)."""
     d = DetSample()
     np_ = rng.below(100)                                              # D1
@@ -49,14 +49,17 @@ def sample_det(rng, sp, n_bg, n_fonts):
         pl.cx = rng.range(0.15, 0.85)                                 # D8
         pl.cy = rng.range(0.15, 0.85)                                 # D9
         pl.font_idx = rng.below(n_fonts) if n_fonts > 0 else 0         # D10
+        # D11/D12 are always drawn so the stream depends on the flags, not on what is on disk
+        pl.use_real = rng.below(100) < real_pct and n_real > 0          # D11
+        pl.real_idx = rng.below(n_real if n_real > 0 else 1)            # D12
         d.plates.append(pl)
-    d.brightness = rng.range(0.5, 1.3)                                # D11
-    d.contrast = rng.range(0.75, 1.25)                                # D12
-    d.warm = rng.range(-0.1, 0.1)                                     # D13
-    d.blur = rng.range(0, 1.2)                                        # D14
-    d.motion = rng.range(0, 2.0)                                      # D15
-    d.noise = rng.range(0, 8)                                         # D16
-    d.jpeg_q = rng.below(50) + 50                                     # D17
+    d.brightness = rng.range(0.5, 1.3)                                # D13
+    d.contrast = rng.range(0.75, 1.25)                                # D14
+    d.warm = rng.range(-0.1, 0.1)                                     # D15
+    d.blur = rng.range(0, 1.2)                                        # D16
+    d.motion = rng.range(0, 2.0)                                      # D17
+    d.noise = rng.range(0, 8)                                         # D18
+    d.jpeg_q = rng.below(50) + 50                                     # D19
     return d
 
 
@@ -105,21 +108,32 @@ def det_meta(file, d, sp, bg_name, imgsz):
            % (file, imgsz, d.n_plates, kept, bg_name, d.bg_hue, d.bg_dark, d.brightness,
               d.contrast, d.warm, d.blur, d.motion, d.noise, d.jpeg_q)]
     for k, pl in enumerate(d.plates):
-        out.append("  %d share=%.4f cx=%.4f cy=%.4f keep=%d text=%s kind=%s\n"
+        out.append("  %d share=%.4f cx=%.4f cy=%.4f keep=%d real=%d ridx=%d text=%s kind=%s\n"
                    % (k, pl.share, pl.cx, pl.cy, 1 if pl.keep else 0,
+                      1 if pl.use_real else 0, pl.real_idx,
                       L.decode(sp, G.heads(pl.p)).text, sp.head("plate_kind").tok[pl.p.kind]))
     return "".join(out)
 
 
-def bg_files(bg_dir):
-    if not bg_dir or not os.path.isdir(bg_dir):
-        return []
-    out = [os.path.join(bg_dir, f) for f in os.listdir(bg_dir)
-           if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+def image_files(dirs):
+    """Recursive, comma-separated list of directories -> sorted image paths (same order as C++)."""
+    out = []
+    for d in (dirs.split(",") if dirs else []):
+        d = d.strip()
+        if not d or not os.path.isdir(d):
+            continue
+        for root, _sub, files in os.walk(d):
+            for f in files:
+                if f.lower().endswith((".jpg", ".jpeg", ".png")):
+                    out.append(os.path.join(root, f).replace(os.sep, "/"))
     return sorted(out)
 
 
-def render_det(d, sp, font_paths, bgs, imgsz, rng):
+def bg_files(bg_dir):
+    return image_files(bg_dir)
+
+
+def render_det(d, sp, font_paths, bgs, imgsz, rng, reals=None):
     from PIL import Image, ImageFilter
     canvas = None
     if d.bg_real and bgs:
@@ -144,7 +158,15 @@ def render_det(d, sp, font_paths, bgs, imgsz, rng):
         canvas = canvas.filter(ImageFilter.GaussianBlur(max(1.0, imgsz * 0.02)))
 
     for pl in d.plates:
-        tex = G.plate_texture(pl.p, sp, font_paths[pl.font_idx % len(font_paths)], rng)
+        tex = None
+        if getattr(pl, "use_real", False) and reals:
+            try:
+                from PIL import Image as _I
+                tex = _I.open(reals[pl.real_idx % len(reals)]).convert("RGB")
+            except Exception:
+                tex = None
+        if tex is None:
+            tex = G.plate_texture(pl.p, sp, font_paths[pl.font_idx % len(font_paths)], rng)
         coeffs = G._persp_coeffs(pl.quad, tex.size[0], tex.size[1])
         warped = tex.transform((imgsz, imgsz), Image.PERSPECTIVE, data=coeffs, resample=Image.BILINEAR)
         mask = Image.new("L", tex.size, 255).transform((imgsz, imgsz), Image.PERSPECTIVE,
@@ -182,7 +204,10 @@ def main():
     ap.add_argument("--spec", default=os.path.join(ROOT, "spec", "labels.txt"))
     ap.add_argument("--fonts", default=os.path.join(ROOT, "fonts"))
     ap.add_argument("--font", default="")
-    ap.add_argument("--bg", default="")
+    ap.add_argument("--bg", default="", help="comma-separated dirs of background photos")
+    ap.add_argument("--real-plates", dest="real_plates", default="",
+                    help="comma-separated dirs of REAL plate photos to paste instead of drawn art")
+    ap.add_argument("--real-pct", dest="real_pct", type=int, default=50)
     ap.add_argument("--count", type=int, default=16)
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--imgsz", type=int, default=640)
@@ -198,6 +223,9 @@ def main():
     bgs = bg_files(a.bg)
     if bgs and not a.quiet:
         print("background pool: %d files from %s" % (len(bgs), a.bg))
+    reals = image_files(a.real_plates)
+    if reals and not a.quiet:
+        print("real plate pool: %d files from %s (%d%% of plates)" % (len(reals), a.real_plates, a.real_pct))
 
     os.makedirs(os.path.join(a.out, "images"), exist_ok=True)
     os.makedirs(os.path.join(a.out, "labels"), exist_ok=True)
@@ -208,7 +236,7 @@ def main():
     kept_total = neg_total = 0
     for i in range(a.start, a.start + a.count):
         rng = Rng((a.seed ^ ((i * 0x9E3779B97F4A7C15) & ((1 << 64) - 1)) ^ DET_SALT) & ((1 << 64) - 1))
-        d = sample_det(rng, sp, len(bgs), len(font_paths))
+        d = sample_det(rng, sp, len(bgs), len(font_paths), len(reals), a.real_pct)
         place_det(d, a.imgsz)
         name = "det%06d.png" % i
         bg_name = os.path.basename(bgs[d.bg_idx]) if (d.bg_real and bgs) else "synth"
@@ -218,7 +246,7 @@ def main():
         neg_total += 1 if d.n_plates == 0 else 0
         if a.meta_only:
             continue
-        img = render_det(d, sp, font_paths, bgs, a.imgsz, rng)
+        img = render_det(d, sp, font_paths, bgs, a.imgsz, rng, reals)
         img.save(os.path.join(a.out, "images", name))
         # binary, so the newlines stay LF and match the C++ writer byte for byte on Windows too
         with open(os.path.join(a.out, "labels", name[:-4] + ".txt"), "wb") as lf:
