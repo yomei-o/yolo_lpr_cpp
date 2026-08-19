@@ -34,9 +34,13 @@ HEAD_ORDER = ["region", "class_num_01", "class_num_02", "class_num_03", "hiragan
 
 
 class Recognizer:
-    """A 9/11-head plate classifier behind an ONNX file plus its own label spec."""
+    """A 9/11-head plate classifier behind an ONNX file plus its own label spec.
 
-    def __init__(self, onnx_path, spec_path, softmax):
+    With `corner_path` set, the plate is rectified from the predicted 4 corners and read once,
+    instead of being read at several margins and summed. Which of the two wins is a measurement, not
+    a preference — hence this flag."""
+
+    def __init__(self, onnx_path, spec_path, softmax, corner_path=None):
         import onnxruntime as ort
         so = ort.SessionOptions()
         so.log_severity_level = 3
@@ -47,6 +51,13 @@ class Recognizer:
         self.spec = L.load(spec_path)
         self.heads = self.spec.of_kind("head")
         self.softmax = softmax                      # EkMixer emits logits; ours emits probabilities
+        self.corner = None
+        if corner_path:
+            import onnxruntime as ort2
+            so2 = ort2.SessionOptions()
+            so2.log_severity_level = 3
+            self.corner = ort2.InferenceSession(open(corner_path, "rb").read(), so2,
+                                                providers=["CPUExecutionProvider"])
         if len(self.heads) < len(self.out_names):
             raise SystemExit("spec %s has %d heads but the model has %d outputs"
                              % (spec_path, len(self.heads), len(self.out_names)))
@@ -59,6 +70,21 @@ class Recognizer:
         return outs
 
     def read(self, rgb, box, margins):
+        if self.corner is not None:
+            x, win = I.corner_input(rgb, box)
+            c = self.corner.run(None, {self.corner.get_inputs()[0].name: x})[0].reshape(-1)
+            corners = []
+            for i in range(4):
+                corners.append(float(win[0] + c[2 * i] * (win[2] - win[0])))
+                corners.append(float(win[1] + c[2 * i + 1] * (win[3] - win[1])))
+            xw = I.warp_to_input(rgb, corners)
+            total = self._probs(xw)
+            out = {}
+            for h, t in zip(self.heads, total):
+                order = np.argsort(-t)
+                out[h.name] = {"top": [h.tok[i] for i in order[:3]],
+                               "conf": float(t[order[0]] / t.sum())}
+            return out
         total = None
         for m in margins:
             x = I.crop_to_input(rgb, box[0], box[1], box[2], box[3], m)
@@ -171,6 +197,7 @@ def main():
     ap.add_argument("--ekmixer", default=os.path.join(ROOT, "..", "_pyj", "weight", "EkMixer-128x128.onnx"))
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--single", action="store_true", help="one crop instead of the margin spread")
+    ap.add_argument("--corner", default="", help="corner regressor ONNX: rectify instead of TTA")
     ap.add_argument("--margin", type=float, default=0.0,
                     help="crop margin for --single (the trainer evaluates at 0.03; the region head is "
                          "measurably sensitive to this, which is what stage 2 exists to fix)")
@@ -183,7 +210,8 @@ def main():
 
     recs = {}
     if "ours" in args.models:
-        recs["ours"] = Recognizer(args.ours, os.path.join(ROOT, "spec", "labels.txt"), softmax=False)
+        recs["ours"] = Recognizer(args.ours, os.path.join(ROOT, "spec", "labels.txt"), softmax=False,
+                                  corner_path=(args.corner or None))
     if "ekmixer" in args.models:
         if not os.path.exists(args.ekmixer):
             print("skipping ekmixer: %s not found" % args.ekmixer)
