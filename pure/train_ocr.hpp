@@ -209,8 +209,10 @@ inline void split_holdout(size_t n, double hold_out, std::vector<int>& train, st
   std::sort(val.begin(), val.end());
 }
 
-// One 128x128 input from a crop file (same sampling as inference: box + margin -> square).
-inline std::vector<float> load_input(const Item& it, float margin) {
+// One 128x128 input from a crop file (same sampling as inference: box + margin -> square), with the
+// photometric jitter the Python trainer applies to real crops (brightness, contrast).
+inline std::vector<float> load_input(const Item& it, float margin, float bright = 1.f,
+                                     float contrast = 1.f) {
   int W = 0, H = 0, C = 0;
   std::vector<unsigned char> blob = read_file(it.path);
   unsigned char* im = blob.empty() ? nullptr
@@ -220,6 +222,8 @@ inline std::vector<float> load_input(const Item& it, float margin) {
   if (it.have_box) { x0 = it.bx0; y0 = it.by0; x1 = it.bx1; y1 = it.by1; }
   std::vector<float> v = jl::crop_to_input(im, W, H, x0, y0, x1, y1, margin);
   stbi_image_free(im);
+  if (bright != 1.f || contrast != 1.f)
+    for (float& z : v) z = std::clamp(((z - 0.5f) * contrast + 0.5f) * bright, 0.f, 1.f);
   return v;
 }
 
@@ -231,10 +235,13 @@ struct Batch {
 
 // The draw order here is the contract with tools/train_ocr.py: per sample, first the set choice
 // (unit()), then the index (below(n)), then the crop margin (range).
+// `photo[s]` = does set s get the extra brightness/contrast draws (real crops do, synthetic ones
+// already carry their own degradation)? The draw counts have to match tools/train_ocr.py exactly.
 inline Batch make_batch(const std::vector<const std::vector<Item>*>& sets,
                         const std::vector<const std::vector<int>*>& idx_pools,
                         const std::vector<double>& weights,
                         const std::vector<std::pair<double, double>>& margins,
+                        const std::vector<bool>& photo,
                         int batch, Rng& rng) {
   std::vector<float> xb((size_t)batch * 3 * 128 * 128);
   Batch b;
@@ -255,7 +262,12 @@ inline Batch make_batch(const std::vector<const std::vector<Item>*>& sets,
     size_t j = (size_t)rng.below((uint64_t)n);
     const Item& it = ds[idx_pools[pick] ? (size_t)(*idx_pools[pick])[j] : j];
     float margin = (float)rng.range(margins[pick].first, margins[pick].second);
-    std::vector<float> v = load_input(it, margin);
+    float bright = 1.f, contrast = 1.f;
+    if (photo[pick]) {
+      bright = (float)rng.range(0.75, 1.25);
+      contrast = (float)rng.range(0.85, 1.15);
+    }
+    std::vector<float> v = load_input(it, margin, bright, contrast);
     std::copy(v.begin(), v.end(), xb.begin() + (size_t)k * 3 * 128 * 128);
     for (int h = 0; h < 11; ++h) {
       b.labels[(size_t)h][(size_t)k] = it.heads[(size_t)h];
