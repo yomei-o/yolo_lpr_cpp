@@ -119,4 +119,43 @@ inline Read read_plate_tta(const onx::Graph& ocr, const spec::Spec& sp, const un
   return read_plate(ocr, sp, rgb, W, H, x0, y0, x1, y1, default_margins());
 }
 
+// ---- result serialisation -------------------------------------------------------------------
+// One JSON shape for every consumer: the CLI (`jlpr detect --json`), the WASM module and the
+// Python side (tools/infer.py). tools/parity/infer.py diffs the C++ and Python JSON, so the field
+// names and the number formatting live in exactly one place.
+inline std::string json_escape(const std::string& s) {
+  std::string o;
+  for (unsigned char c : s) {
+    if (c == '"' || c == '\\') { o += '\\'; o += (char)c; }
+    else if (c < 0x20) { char b[8]; snprintf(b, sizeof b, "\\u%04x", c); o += b; }
+    else o += (char)c;
+  }
+  return o;
+}
+
+inline std::string plates_json(const std::vector<Box>& boxes, const std::vector<Read>& reads) {
+  std::string o = "{\"plates\":[";
+  char num[256];
+  for (size_t i = 0; i < boxes.size() && i < reads.size(); ++i) {
+    const Box& b = boxes[i];
+    const Read& r = reads[i];
+    snprintf(num, sizeof num, "%s{\"box\":[%.1f,%.1f,%.1f,%.1f],\"det\":%.3f,\"crops\":%d,",
+             i ? "," : "", b.x1, b.y1, b.x2, b.y2, b.score, r.crops);
+    o += num;
+    o += "\"text\":\"" + json_escape(r.plate.text) + "\",";
+    o += "\"region\":\"" + json_escape(r.plate.region) + "\",";
+    o += "\"cls\":\"" + json_escape(r.plate.cls) + "\",";
+    o += "\"hira\":\"" + json_escape(r.plate.hira) + "\",";
+    o += "\"num\":\"" + json_escape(r.plate.disp) + "\",";
+    o += "\"kind\":\"" + json_escape(r.plate.kind) + "\",";
+    o += "\"arg\":[";
+    for (size_t k = 0; k < r.arg.size(); ++k) { snprintf(num, sizeof num, "%s%d", k ? "," : "", r.arg[k]); o += num; }
+    o += "],\"conf\":[";
+    for (size_t k = 0; k < r.conf.size(); ++k) { snprintf(num, sizeof num, "%s%.4f", k ? "," : "", r.conf[k]); o += num; }
+    o += "]}";
+  }
+  o += "]}";
+  return o;
+}
+
 }  // namespace jl

@@ -184,11 +184,12 @@ static int cmd_detect(int argc, char** argv) {
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string outp = arg_of(argc, argv, "--out", "");
   bool single = has_flag(argc, argv, "--single");
+  bool as_json = has_flag(argc, argv, "--json");   // machine-readable, same shape as the WASM/Python output
   jl::DetCfg cfg;
   cfg.conf = (float)atof(arg_of(argc, argv, "--conf", "0.15").c_str());
   cfg.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "416").c_str());
   if (img.empty()) {
-    printf("usage: jlpr detect --img <file> [--det onnx] [--ocr onnx] [--out png] [--conf f] [--single]\n");
+    printf("usage: jlpr detect --img <file> [--det onnx] [--ocr onnx] [--out png] [--conf f] [--single] [--json]\n");
     return 1;
   }
 
@@ -198,27 +199,33 @@ static int cmd_detect(int argc, char** argv) {
   spec::Spec sp = spec::load(spec_p);
   onx::Graph det = onx::load_onnx(det_p);
   onx::Graph ocr = onx::load_onnx(ocr_p);
-  printf("%s %dx%d   det=%s ocr=%s\n", img.c_str(), W, H, det_p.c_str(), ocr_p.c_str());
+  if (!as_json) printf("%s %dx%d   det=%s ocr=%s\n", img.c_str(), W, H, det_p.c_str(), ocr_p.c_str());
 
   std::vector<Det> all;
   std::vector<jl::Box> boxes = jl::detect_plates(det, im, W, H, cfg, &all);
-  printf("plates: %zu (conf>=%.2f, %zu raw detections over all classes)\n", boxes.size(), cfg.conf, all.size());
+  std::vector<jl::Read> reads;
+  if (!as_json)
+    printf("plates: %zu (conf>=%.2f, %zu raw detections over all classes)\n", boxes.size(), cfg.conf, all.size());
 
   for (size_t i = 0; i < boxes.size(); ++i) {
     const jl::Box& b = boxes[i];
     jl::Read r = single ? jl::read_plate_single(ocr, sp, im, W, H, b.x1, b.y1, b.x2, b.y2)
                         : jl::read_plate_tta(ocr, sp, im, W, H, b.x1, b.y1, b.x2, b.y2);
-    printf("  [%zu] box (%.0f,%.0f)-(%.0f,%.0f) det %.2f  crops %d\n", i, b.x1, b.y1, b.x2, b.y2,
-           b.score, r.crops);
-    out_raw("       " + r.plate.text + "\n");
-    printf("       conf");
-    for (size_t h = 0; h < r.conf.size(); ++h) printf(" %.2f", r.conf[h]);
-    printf("\n");
+    reads.push_back(r);
+    if (!as_json) {
+      printf("  [%zu] box (%.0f,%.0f)-(%.0f,%.0f) det %.2f  crops %d\n", i, b.x1, b.y1, b.x2, b.y2,
+             b.score, r.crops);
+      out_raw("       " + r.plate.text + "\n");
+      printf("       conf");
+      for (size_t h = 0; h < r.conf.size(); ++h) printf(" %.2f", r.conf[h]);
+      printf("\n");
+    }
     draw_box(im, W, H, (int)b.x1, (int)b.y1, (int)b.x2, (int)b.y2, 255, 60, 60);
   }
+  if (as_json) out_raw(jl::plates_json(boxes, reads) + "\n");
   if (!outp.empty()) {
     stbi_write_png(outp.c_str(), W, H, 3, im, W * 3);
-    printf("wrote %s\n", outp.c_str());
+    if (!as_json) printf("wrote %s\n", outp.c_str());
   }
   stbi_image_free(im);
   return boxes.empty() ? 1 : 0;
@@ -233,7 +240,7 @@ int main(int argc, char** argv) {
            "  jlpr labels     [--dump|--emit-header out.hpp]\n"
            "  jlpr export     --ocr <ref_dir> --out <onnx>\n"
            "  jlpr parity-ocr --ocr <onnx> --ref <ref_dir>\n"
-           "  jlpr detect     --img <file> [--det onnx] [--ocr onnx] [--out png] [--conf f] [--single]\n"
+           "  jlpr detect     --img <file> [--det onnx] [--ocr onnx] [--out png] [--conf f] [--single] [--json]\n"
            "  jlpr rgba       --img <file> --out <file.rgba>\n"
            "  jlpr gen|train|val   (not implemented yet)\n");
     return 1;
