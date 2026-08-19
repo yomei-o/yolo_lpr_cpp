@@ -26,6 +26,6 @@ mkdir -p scratch
 # shell32.lib: main() calls CommandLineToArgvW (UTF-8 argv). Some SDK/toolset combinations pull it in
 # implicitly and some do not (14.31 + SDK 10.0.19041 does not), so name it rather than depend on that.
 cl.exe //nologo //std:c++20 //O2 //EHsc //utf-8 //Zc:preprocessor //DNOMINMAX \
-  //I pure //I pure/third_party \
+  //I pure //I pure/third_party //I pure/third_party/eigen_flat \
   $EXTRA "$@" "$(cygpath -w "$SRC")" shell32.lib //Fo:scratch\\ //Fe:"$(cygpath -w "$OUT")"
 echo "built $OUT (MSVC $(basename "$MSVC_DIR"), SDK $(basename "$SDK_INC"))"

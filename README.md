@@ -447,7 +447,13 @@ tools/     labels.py rng.py jlpr.py infer.py eval_ocr.py strip_nms.py  ✅ / gen
 models/    plate_det_pyj320.onnx ✅(暫定・借り物) / plate_ocr.onnx ✅ / plate_corner.onnx (M6)
 wasm/      jlpr_wasm.cpp + index.html + test_node.js  ✅（カメラ/ファイル/手動枠/PNG保存）
 ```
-- C++ ビルドは単一 TU、`cl /std:c++20 /O2` ／ `g++ -std=c++20 -O2` ／ `emcc -msimd128`。`-DUSE_EIGEN` で CPU 高速化、`-DUSE_CUDA` で GPU
+- C++ ビルドは単一 TU、`cl /std:c++20 /O2`（`build/cc.sh`）／ `g++ -std=c++20 -O2`（`build/gcc.sh`）／
+  `emcc -msimd128`（`build/emcc.sh`）／ `nvcc -x cu -std=c++17 -DUSE_CUDA`（`build/nvcc.sh`）の 4 系統。
+  **実測（2026-08-19、この開発機）**: `EXTRA="-DUSE_EIGEN -arch:AVX2"` で検出器の学習が **2.5 倍**
+  （1.8 → 0.7 秒/step、batch2 320px）、4隅の学習が **3.4 倍**（30 秒 → 8.7 秒/20step）。**loss も eval も
+  完全に同値**であることを確認済み。`-DUSE_CUDA` は `pure/gpu_check.cpp` と `pure/jlpr.cpp` の両方が
+  nvcc 13.3 でビルドでき（この機に GPU が無いので実行は `colab/gpu_check.ipynb`）、device seam は
+  `pure/backend.hpp` の GEMM 3 本だけなので学習コードは 1 行も変わらない
 - CLI は両言語で揃える: `jlpr train --model ocr --data … --epochs …` ⇔ `python tools/train_ocr.py --data … --epochs …`（引数名も同じ）
 - WASM デモは 3 モデルを実行時 fetch。検出は 640 が重いので 416/512 の ONNX を併置し、ボタン押しで実行
 
