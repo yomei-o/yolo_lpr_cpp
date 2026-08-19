@@ -36,10 +36,11 @@ if [ "$WHAT" = all ] || [ "$WHAT" = synth ]; then
   $JLPR gen --out data/synth     --count 30000 --seed 90210 $STRICT --quiet
   $JLPR gen --out data/synth_val --count 2000  --seed 555001 $STRICT --quiet
   # Names the real data has none of get oversampled into the SAME directory (--start appends), which
-  # keeps one dataset and one weight: 30000 uniform + 3000 of the five 2025 additions puts them at
-  # ~10% of samples instead of 3.6%. They start from zero weights, so they need the extra exposure.
-  echo "== recognizer: +3000 crops of the 2025 additions (regions 133-137)"
-  $JLPR gen --out data/synth --count 3000 --start 30000 --seed 90210 --region 133-137 $STRICT --quiet
+  # keeps one dataset and one weight: 30000 uniform + 6000 of the five 2025 additions puts them at
+  # ~17% of samples instead of 3.6%. They start from zero weights, so they need the extra exposure —
+  # measured: at 3.6% 江戸川 stayed unreachable, at 10% it became top-1 on 1 of 4 crops.
+  echo "== recognizer: +6000 crops of the 2025 additions (regions 133-137)"
+  $JLPR gen --out data/synth --count 6000 --start 30000 --seed 90210 --region 133-137 $STRICT --quiet
   echo "== region coverage test set: 2 crops per region name (tools/check_regions.py)"
   $JLPR gen --out data/region_sweep --count 276 --region sweep --seed 4242 $STRICT --quiet
 fi
