@@ -1,0 +1,20 @@
+#!/bin/sh
+# Emscripten build for the browser demo. emsdk lives at C:\prog\emsdk\emsdk on this machine
+# (override with EMSDK=...). Run `./emsdk install latest && ./emsdk activate latest` there once.
+#
+#   sh build/emcc.sh wasm/jlpr_wasm.cpp -o wasm/jlpr.js
+set -e
+EMSDK="${EMSDK:-/c/prog/emsdk/emsdk}"
+EMCC="$EMSDK/upstream/emscripten/emcc"
+[ -f "$EMCC" ] || { echo "emcc not found at $EMCC — run: cd $EMSDK && ./emsdk install latest"; exit 1; }
+export EM_CONFIG="$EMSDK/.emscripten"
+
+SRC="$1"; shift
+OUT="wasm/jlpr.js"
+if [ "$1" = "-o" ]; then OUT="$2"; shift 2; fi
+
+python "$EMCC" -std=c++20 -O3 -msimd128 -Ipure -Ipure/third_party \
+  -s MODULARIZE=1 -s EXPORT_NAME=createJlpr -s ALLOW_MEMORY_GROWTH=1 \
+  -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","HEAPU8","HEAPF32"]' \
+  $EXTRA "$@" "$SRC" -o "$OUT"
+echo "built $OUT"
