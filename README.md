@@ -12,7 +12,40 @@
 9-head 分類器 [lpr_cpp](https://github.com/yomei-o/lpr_cpp) ／ [yolox_cpp](https://github.com/yomei-o/yolox_cpp)。
 本リポジトリはこの2つを**製品として使える1本のパイプライン**にまとめ直すもの。
 
-**現在の状態: 技術方針を確定した段階（実装 0）。進捗と残作業は [RESUME.md](RESUME.md)。**
+**現在の状態: ワンパス推論が CLI と WASM で動く（既存モデル）。学習系はこれから。**
+進捗と残作業は [RESUME.md](RESUME.md)。
+
+## 動かす
+
+```sh
+sh build/gcc.sh pure/jlpr.cpp -o jlpr.exe          # または sh build/cc.sh (MSVC, vcvars 不要)
+
+./jlpr.exe detect --img assets/tokyu-bus-yokohama200ka3591.jpg \
+                  --det models/plate_det_yolox.onnx --ocr models/plate_ocr.onnx --out out.png
+#   plates: 2 (conf>=0.15, 6 raw detections over all classes)
+#     [0] box (250,407)-(337,465) det 0.82  crops 6
+#          横浜 200 か 3591
+#          conf 0.57 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00
+
+python tools/parity/labels.py                       # ラベル表の C++⇔Python 一致 (M1)
+./jlpr.exe parity-ocr --ocr models/plate_ocr.onnx --ref <lpr_cpp>/pure/ref
+#   exported ONNX vs original-ONNX fixture: worst 3.299e-05   argmax 9/9   MATCH
+```
+
+ブラウザ（WASM、送信なし・完全ローカル）:
+
+```sh
+sh build/emcc.sh wasm/jlpr_wasm.cpp -o wasm/jlpr.js
+python -m http.server 8000     # リポジトリのルートから → http://localhost:8000/wasm/
+node wasm/test_node.js         # ヘッドレスの回帰テスト（CLI と同じ画素で同じ文字列を assert）
+```
+
+実測（実写 960×640、CPU 1 スレッド）: CLI **5.6 秒** / WASM(node, SIMD) **3.82 秒** で
+`横浜 200 か 3591`。内訳は検出 416px が大半、認識は 6 クロップ合算。
+
+**まだ暫定なところ**: 検出器は `lpr_cpp` の交通カメラ由来 YOLOX-tiny（8クラス、class 7 = plate）を
+そのまま使っている。yolov8n nc=1 に差し替えるのは M7。4隅補正（M6）も未実装なので、地域名 head の
+信頼度はこの写真で 0.57 しかない（他の head は 1.00）——「なぜ 4隅補正を足すのか」がそのまま数字に出ている。
 
 ## パイプライン（3段）
 
@@ -126,19 +159,19 @@ Python の生成器を書く。プレート**画像そのもの**と**車体に�
 ```
 spec/      labels.txt                地名/かな/分類番号/種別の唯一の定義（C++・Python 両方をここから生成）
            pipeline.md               入出力・前処理・マージン・閾値の仕様（両実装が従う）
-pure/      onnx.hpp / onnx_run.hpp   ONNX リーダ＋実行（姉妹リポから移植、必要 op のみ）
-           onnx_export.hpp           学習した重み → ONNX（3モデル分）
+pure/      onnx.hpp / onnx_run.hpp   ONNX リーダ（ファイル/メモリ）＋統合インタプリタ  ✅
+           onnx_export_lpr.hpp       認識器の重み(manifest+weights.bin) → ONNX  ✅
            autograd/…                自作 autograd・conv・BN・Adam（姉妹リポから移植）
-           infer.hpp                 YOLOv8 decode(DFL)+NMS（nc 任意に一般化）
-           warp.hpp                  4隅→透視変換→128×128
-           lpr_labels.hpp            ラベル表と decode（spec から生成）
-           pipeline.hpp              detect → corner → warp → classify → 文字列＋信頼度
-           gen.cpp                   合成データ生成（C++ 版）
-           jlpr.cpp                  CLI: gen / train / val / detect / export
-tools/     labels.py gen.py train_*.py eval.py export_*.py   同じサブコマンドの Python 版
-           parity/                   Python↔C++ の一致テスト（ラベル・生成・loss・推論・ONNX）
-models/    plate_det.onnx / plate_corner.onnx / plate_ocr.onnx
-wasm/      ブラウザデモ（カメラ / ファイル入力、GitHub Pages）
+           infer_yolox.hpp           暫定検出器の decode+NMS  ✅（yolov8 用は M7 で追加）
+           crop.hpp                  letterbox / box→128×128 crop  ✅（4隅 warp は M6）
+           spec.hpp                  spec/labels.txt を実行時パース＋decode  ✅
+           pipeline.hpp              detect → crop → classify → 文字列＋信頼度  ✅
+           gen.cpp                   合成データ生成（C++ 版、M4）
+           jlpr.cpp                  CLI: labels / export / parity-ocr / detect / rgba  ✅
+tools/     labels.py rng.py jlpr.py  ✅ / gen.py train_*.py eval.py  (M4 以降)
+           parity/labels.py          ラベル表の一致テスト ✅（生成・loss・推論は今後）
+models/    plate_det_yolox.onnx ✅(暫定) / plate_ocr.onnx ✅ / plate_corner.onnx (M6)
+wasm/      jlpr_wasm.cpp + index.html + test_node.js  ✅（カメラ/ファイル/手動枠/PNG保存）
 ```
 - C++ ビルドは単一 TU、`cl /std:c++20 /O2` ／ `g++ -std=c++20 -O2` ／ `emcc -msimd128`。`-DUSE_EIGEN` で CPU 高速化、`-DUSE_CUDA` で GPU
 - CLI は両言語で揃える: `jlpr train --model ocr --data … --epochs …` ⇔ `python tools/train_ocr.py --data … --epochs …`（引数名も同じ）
