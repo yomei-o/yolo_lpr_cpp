@@ -25,7 +25,7 @@ det 0.93 / 地名 conf 0.94 / 0.44 秒（WASM, node, SIMD）── CLI と同じ
 | WASM（node、実写 2 枚） | CLI と同じ文字列・同じ box を assert して **PASS**、0.44-1.04 秒/フレーム |
 | C++ ⇔ Python | 推論は文字列・argmax 一致、学習は step1 の loss 差 **1e-6**、生成は labels/meta がバイト一致 |
 | 検出器の学習（C++、2026-08-19 夜に追加） | ultralytics の `v8DetectionLoss` と **loss 3.1e-06 / 勾配 2.7e-06** 一致（同じ head テンソル）。2 枚固定 40 step で box 0.247 → **0.024** |
-| 4隅の学習（C++、同上） | PyTorch と **loss 2.7e-06 / 勾配 1.6e-05** 一致。`--init random` で出発点の ONNX も C++ が書く |
+| 4隅の学習（C++、同上） | PyTorch と **loss 2.7e-06 / 勾配 1.6e-05** 一致。ゼロ初期化から 3000 step で 97% → **2.94%**（hold-out 300 枚）、その重みで実写も読める |
 | 検出器の評価（C++、同上） | `jlpr val --model det` が mAP50 / mAP50-95 まで出す。Python と数値一致（差 5e-07 以下）、`compute_ap` は ultralytics と差 0 |
 | 空クローンからの通し | clone 2 本 → ビルド → 生成 → 実写検出 → 学習 → パリティまで **通る**（`SETUP.md`） |
 | ビルド | MSVC 14.41（vcvars 不要の `build/cc.sh`）・g++ 14.2・emcc（`-msimd128`）の 3 系統 |
@@ -232,6 +232,65 @@ module 番号が違うエクスポート（`/model.16/…` など）でも動く
 
 速度メモ: バッチの画像デコードを `parallel_for` に載せた（4隅で 2.5 秒/step → 0.9 秒/step、
 検出も同様）。乱数の引き順は変えていないので**数値は完全に同じ**（loss も eval も一致を確認）。
+
+## 重みでない初期化子を最適化していた — 2026-08-19 夜（測って分かった罠）
+
+`onx::make_trainable` は ONNX の float 初期化子を**全部**パラメータにしていた。yolov8 の neck には
+Resize の scales が float `[1,1,2,2]` の初期化子として入っている。勾配は来ないので SGD/Adam は
+これを動かさない。**ところが decoupled weight decay（AdamW / ultralytics 既定の wd=5e-4）は勾配を
+見ずに `p -= lr*wd*p` を効かせる。** 2.0 が 1.9999996 になり、`onnx_run` の `(int64_t)scale` が
+1 に切り捨てられて neck が上がらなくなる。
+
+| | wd=0 | wd=5e-4（既定） |
+|---|---|---|
+| 1 step 後の学習 loss | 2.8958 | **23.1296** |
+| 同じ重みでの mAP50 | 0.995 | **0.005** |
+| 重みの一致 | — | 相対 2e-07（＝全部合っている） |
+
+**見つけ方**: 「重みが 7 桁一致しているのに loss が 8 倍」なので、まず重みを numpy で全部突き合わせ、
+差が最大なのが `/model.22/Constant_*`（anchor と stride）と気づき、次に python 側で 2e-7 の乱数を
+足した ONNX を作ったら **onnxruntime がロードを拒否**（`Concat` の shape が 19 と 20 で合わない）。
+そこで初めて Resize の scales が犯人だと分かった。**勾配だけ見ていても永久に見つからない類のバグ。**
+
+対策: `weight_initializers()` を追加し、Conv/Gemm/MatMul/BN の**重み位置の入力だけ**をパラメータに
+する。さらに `needed`（損失が読むテンソル）を渡すとその部分グラフに限定するので、検出器では DFL の
+射影と decode 尾部も対象外になる（132 → 126 テンソル）。`Resize` のスケール読みも `llround` に。
+認識器・4隅のパラメータ数は変わらない（元から Conv/BN/Gemm しか無い）。
+
+**一般化して覚えること**: ONNX を直接学習する方式では、**初期化子＝重みではない**。グラフの構造を
+運ぶ定数（Resize scales、anchor grid、DFL の射影、decode 定数）が同じ配列に混ざっている。
+勾配が来ないから安全、は成り立たない — weight decay と EMA は勾配を見ない。
+
+## 検出器の学習に中身を入れた — 2026-08-19 夜
+
+損失の正しさ（3e-06 で ultralytics 一致）だけでは学習は回らないので、`tools/train_det.py` が
+Ultralytics に頼んでいる処方を C++ にも入れた:
+- **拡張**: mosaic（4枚を 2S キャンバスに貼って切り出す）、回転 ±5°・拡大縮小 1±0.6・平行移動 0.15、
+  HSV 0.015/0.6/0.4、左右反転 0.5、close_mosaic（最後の 1 割は mosaic を切る）。
+- **最適化**: SGD(momentum 0.937, nesterov, wd 5e-4) 既定 ＋ warmup（lr と momentum）＋ linear/cosine、
+  EMA(0.9999, ramp)、`--freeze N`、`--epochs`。
+- **学習中の検証**: `--val/--val-every` が**製品経路**（フルグラフ + NMS + `pure/eval_det.hpp`）で
+  mAP を測り、`--export-best` が mAP50-95 最良の EMA 重みを書き出す。評価コードは
+  `jlpr val --model det` と同じ関数なので、「学習が追った数字」と「CLI が出す数字」がずれない。
+- **`--check-aug`**: 拡張後のラベルを学習済み検出器に読ませ、箱が画素と一緒に動いているかを数値で
+  確認する（素の resize で 100% / IoU 0.933、拡張後も 100% / IoU 0.954）。損失パリティでは絶対に
+  見えない部分（間違った箱でも損失は下がる）を押さえるための検算。
+
+## 4隅回帰を C++ だけで学習した — 2026-08-19 夜（ゼロ初期化から）
+
+`jlpr gen` で作った 1200 クロップ、`--init random`（出発点の ONNX も C++ が書く）、3000 step・
+batch 32・AdamW 1e-3・CPU 45 分:
+
+| | 誤差（プレート幅比） |
+|---|---|
+| 学習前（ランダム初期化） | 97% |
+| 500 step | 12.5% |
+| 3000 step（学習に使った分布） | **2.78%** |
+| 別 seed の 300 枚（hold-out） | **2.94%** |
+| 参考: 同梱の Python 学習済み `plate_corner.onnx` | 1.93% / 1.96% |
+
+Python 版は桁違いに多い合成データで回しているので差はデータ量。**C++ だけで生成 → 学習 → ONNX 出力 →
+製品経路で使用**まで通ることは確認済み（この重みで実写を読ませて `横浜 480 り 4567`、地名 conf 0.88）。
 
 ## 合成データのドメインギャップ — 2026-08-19 実測
 

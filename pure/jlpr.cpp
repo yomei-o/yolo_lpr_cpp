@@ -1549,6 +1549,157 @@ static int cmd_context_test(int argc, char** argv) {
   return 0;
 }
 
+// jlpr strip-nms — the C++ side of tools/strip_nms.py: cut an Ultralytics-style detector ONNX just
+// before its NMS tail. An export made with nms=True ends in NonMaxSuppression / GatherND / ScatterND
+// / NonZero / Where, which a small hand-written interpreter has no business implementing and does not
+// need to: the tensor feeding the NMS already holds pixel-space boxes and sigmoided scores, and
+// pure/infer_v8.hpp does the threshold + greedy NMS in 40 lines.
+static int cmd_strip_nms(int argc, char** argv) {
+  std::string src = arg_of(argc, argv, "--in", "");
+  std::string dst = arg_of(argc, argv, "--out", "");
+  std::string want = arg_of(argc, argv, "--out-tensor", "");
+  if (src.empty() || dst.empty()) {
+    printf("usage: jlpr strip-nms --in <onnx> --out <onnx> [--out-tensor NAME]\n"
+           "  with no --out-tensor the last Concat before the tail is used\n");
+    return 1;
+  }
+  onx::Graph g = onx::load_onnx(src);
+  if (want.empty()) {
+    for (const onx::Node& n : g.nodes)
+      if (n.op_type == "Concat" && !n.output.empty()) want = n.output[0];
+    if (want.empty()) { printf("%s has no Concat to cut at; pass --out-tensor\n", src.c_str()); return 1; }
+  }
+  // keep exactly the nodes that produce `want`, and only the initializers those nodes read
+  std::map<std::string, const onx::Node*> prod;
+  for (const onx::Node& n : g.nodes)
+    for (const std::string& o : n.output) prod[o] = &n;
+  if (!prod.count(want)) { printf("%s: no node produces '%s'\n", src.c_str(), want.c_str()); return 1; }
+  std::set<const onx::Node*> keep;
+  std::set<std::string> used;
+  std::vector<std::string> stack{want};
+  while (!stack.empty()) {
+    const std::string name = stack.back();
+    stack.pop_back();
+    used.insert(name);
+    auto it = prod.find(name);
+    if (it == prod.end() || keep.count(it->second)) continue;
+    keep.insert(it->second);
+    for (const std::string& in : it->second->input) if (!in.empty()) stack.push_back(in);
+  }
+  onx::Graph out;
+  out.opset = g.opset;
+  out.inputs = g.inputs;
+  for (const onx::Node& n : g.nodes) if (keep.count(&n)) out.nodes.push_back(n);
+  for (const onx::Tensor64& t : g.init_f) if (used.count(t.name)) out.init_f.push_back(t);
+  for (const onx::IntsTensor& t : g.init_i) if (used.count(t.name)) out.init_i.push_back(t);
+  out.outputs.push_back({want, {}});
+  onx::save_onnx(out, dst);
+  std::map<std::string, int> ops;
+  for (const onx::Node& n : out.nodes) ops[n.op_type]++;
+  printf("cut at %s: %zu -> %zu nodes, %zu float initializers\n", want.c_str(), g.nodes.size(),
+         out.nodes.size(), out.init_f.size());
+  printf("ops:");
+  for (const auto& kv : ops) printf(" %s(%d)", kv.first.c_str(), kv.second);
+  printf("\nwrote %s\n", dst.c_str());
+  return 0;
+}
+
+// jlpr recolor-test — the C++ side of tools/recolor_test.py: the same photo and the same geometry,
+// with only the plate's base and text colours swapped for the four Japanese schemes. It exists
+// because "the detector is weak on black plates" was a claim that needed a measurement; the answer
+// (this method does NOT reproduce a colour bias, and the recogniser reads all four) is in RESUME.
+static int cmd_recolor_test(int argc, char** argv) {
+  std::string img = arg_of(argc, argv, "--img", "");
+  std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_v8n_320.onnx");
+  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v7_bal.onnx");
+  std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
+  std::string save = arg_of(argc, argv, "--save-dir", "");
+  float bx0 = (float)atof(arg_of(argc, argv, "--x1", "-1").c_str());
+  float by0 = (float)atof(arg_of(argc, argv, "--y1", "-1").c_str());
+  float bx1 = (float)atof(arg_of(argc, argv, "--x2", "-1").c_str());
+  float by1 = (float)atof(arg_of(argc, argv, "--y2", "-1").c_str());
+  float conf = (float)atof(arg_of(argc, argv, "--conf", "0.05").c_str());
+  if (img.empty()) {
+    printf("usage: jlpr recolor-test --img <file> [--det onnx] [--ocr onnx] [--fmt xyxy|cxcywh] "
+           "[--x1 f --y1 f --x2 f --y2 f] [--conf f] [--save-dir d]\n");
+    return 1;
+  }
+  jl::DetCfg cfg;
+  cfg.kind = jl::DetKind::V8;
+  cfg.nc = 1;
+  cfg.plate_class = 0;
+  cfg.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "0").c_str());
+  cfg.conf = conf;
+  cfg.nms = 0.45f;
+  cfg.v8_fmt = (arg_of(argc, argv, "--fmt", "cxcywh") == "xyxy") ? BoxFmt::XYXY : BoxFmt::CXCYWH;
+
+  int W = 0, H = 0, C = 0;
+  std::vector<unsigned char> blob = trn::read_file(img);
+  unsigned char* im = blob.empty() ? nullptr
+                                   : stbi_load_from_memory(blob.data(), (int)blob.size(), &W, &H, &C, 3);
+  if (!im) { printf("cannot read %s\n", img.c_str()); return 1; }
+  onx::Graph det = onx::load_onnx(det_p);
+  onx::Graph ocr = onx::load_onnx(ocr_p);
+  spec::Spec sp = spec::load(spec_p);
+  if (bx0 < 0) {
+    jl::DetCfg find = cfg;
+    find.conf = 0.25f;
+    std::vector<jl::Box> b = jl::detect_plates(det, im, W, H, find);
+    if (b.empty()) { printf("no plate on the original; pass --x1..--y2\n"); return 1; }
+    bx0 = b[0].x1; by0 = b[0].y1; bx1 = b[0].x2; by1 = b[0].y2;
+    printf("plate box from the original: (%.0f,%.0f)-(%.0f,%.0f)\n", bx0, by0, bx1, by1);
+  }
+  struct Pal { const char* name; unsigned char bg[3], fg[3]; };
+  const Pal pals[4] = {
+    {"\xE7\x99\xBD\xE5\x9C\xB0\xE7\xB7\x91\xE5\xAD\x97 (\xE8\x87\xAA\xE5\xAE\xB6\xE7\x94\xA8)",   {250, 250, 248}, {16, 90, 60}},
+    {"\xE7\xB7\x91\xE5\x9C\xB0\xE7\x99\xBD\xE5\xAD\x97 (\xE4\xBA\x8B\xE6\xA5\xAD\xE7\x94\xA8)",   {16, 90, 60},    {250, 250, 248}},
+    {"\xE9\xBB\x84\xE5\x9C\xB0\xE9\xBB\x92\xE5\xAD\x97 (\xE8\xBB\xBD\xE8\x87\xAA\xE5\xAE\xB6\xE7\x94\xA8)", {240, 205, 20},  {25, 25, 25}},
+    {"\xE9\xBB\x92\xE5\x9C\xB0\xE9\xBB\x84\xE5\xAD\x97 (\xE8\xBB\xBD\xE4\xBA\x8B\xE6\xA5\xAD\xE7\x94\xA8)", {25, 25, 25},    {240, 205, 20}},
+  };
+  const int x1 = std::max(0, (int)std::lround(bx0)), y1 = std::max(0, (int)std::lround(by0));
+  const int x2 = std::min(W, (int)std::lround(bx1)), y2 = std::min(H, (int)std::lround(by1));
+  if (x2 <= x1 || y2 <= y1) { printf("the box is empty after clipping\n"); return 1; }
+  // luminance inside the plate, min-max normalised on the 2nd/98th percentile (shading and bleed are
+  // preserved: only the two endpoint colours change)
+  std::vector<float> lum((size_t)(x2 - x1) * (y2 - y1));
+  for (int y = y1; y < y2; ++y)
+    for (int x = x1; x < x2; ++x) {
+      const unsigned char* p = im + ((size_t)y * W + x) * 3;
+      lum[(size_t)(y - y1) * (x2 - x1) + (x - x1)] = 0.299f * p[0] + 0.587f * p[1] + 0.114f * p[2];
+    }
+  std::vector<float> srt = lum;
+  std::sort(srt.begin(), srt.end());
+  const float lo = srt[(size_t)(0.02 * (srt.size() - 1))], hi = srt[(size_t)(0.98 * (srt.size() - 1))];
+
+  printf("\n%-28s %8s   %s\n", "plate colours", "det", "reading (given box)");
+  for (const Pal& pal : pals) {
+    std::vector<unsigned char> rgb(im, im + (size_t)W * H * 3);
+    for (int y = y1; y < y2; ++y)
+      for (int x = x1; x < x2; ++x) {
+        const float t = std::min(1.f, std::max(0.f, (lum[(size_t)(y - y1) * (x2 - x1) + (x - x1)] - lo) /
+                                                        std::max(1e-6f, hi - lo)));
+        for (int c = 0; c < 3; ++c)
+          rgb[((size_t)y * W + x) * 3 + c] =
+              (unsigned char)std::lround(pal.fg[c] + (pal.bg[c] - pal.fg[c]) * t);
+      }
+    std::vector<jl::Box> got = jl::detect_plates(det, rgb.data(), W, H, cfg);
+    jl::Read rd = jl::read_plate_tta(ocr, sp, rgb.data(), W, H, bx0, by0, bx1, by1);
+    char det_s[16];
+    if (!got.empty()) snprintf(det_s, sizeof det_s, "%.3f", got[0].score);
+    else snprintf(det_s, sizeof det_s, "%s", "none");
+    printf("%-28s %8s   %s (region %.2f)\n", pal.name, det_s, rd.plate.text.c_str(), rd.conf[0]);
+    if (!save.empty()) {
+      make_dir(save);
+      static int k = 0;
+      char path[512];
+      snprintf(path, sizeof path, "%s/recolor%d.png", save.c_str(), k++);
+      stbi_write_png(path, W, H, 3, rgb.data(), W * 3);
+    }
+  }
+  stbi_image_free(im);
+  return 0;
+}
+
 static int cmd_labels(int argc, char** argv) {
   std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
   spec::Spec sp = spec::load(spec_path);
@@ -1784,7 +1935,12 @@ int main(int argc, char** argv) {
            "                              [--limit N] [--export onnx] [--gradcheck] [--dump-fixture bin]\n"
            "  jlpr train      --model corner --synth <dir> [--init random|onnx] [--width N] [--export onnx]\n"
            "  jlpr val        --data <dir> [--kind alpr|synth] [--holdout]\n"
-           "  jlpr val        --model det --data <yolo dir> [--det onnx] [--fmt xyxy|cxcywh] [--conf f]\n");
+           "  jlpr val        --model det --data <yolo dir> [--det onnx] [--fmt xyxy|cxcywh] [--conf f]\n"
+           "  jlpr pseudo-label --src <dir> --out <yolo dir> [--det onnx] [--conf f]\n"
+           "  jlpr check-regions --data <region sweep dir> [--ocr onnx] [--alpr root] [--tta]\n"
+           "  jlpr context-test  --img <file> [--det onnx] [--shares a,b,c]\n"
+           "  jlpr recolor-test  --img <file> [--det onnx] [--ocr onnx]\n"
+           "  jlpr strip-nms     --in <onnx> --out <onnx> [--out-tensor NAME]\n");
     return 1;
   }
   std::string cmd = argv[1];
@@ -1800,6 +1956,8 @@ int main(int argc, char** argv) {
   if (cmd == "pseudo-label") return cmd_pseudo_label(argc, argv);
   if (cmd == "check-regions") return cmd_check_regions(argc, argv);
   if (cmd == "context-test") return cmd_context_test(argc, argv);
+  if (cmd == "strip-nms") return cmd_strip_nms(argc, argv);
+  if (cmd == "recolor-test") return cmd_recolor_test(argc, argv);
   printf("jlpr: '%s' is not implemented yet\n", cmd.c_str());
   return 1;
 }
