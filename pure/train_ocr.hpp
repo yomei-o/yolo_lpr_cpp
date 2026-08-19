@@ -278,15 +278,17 @@ inline Batch make_batch(const std::vector<const std::vector<Item>*>& sets,
   return b;
 }
 
-// region top-1 on a set of indices (single crop, no TTA) — the number the Python side prints too.
+// region top-1 on a set of indices (single crop, no TTA, FIXED margin) — the same number the Python
+// side prints. The margin is fixed on purpose: running the training augmentation through the metric
+// made the baseline look 8 points worse and made every run incomparable.
+static constexpr float EVAL_MARGIN = 0.03f;
+
 inline double eval_region(onx::Trainable& t, const std::vector<Item>& ds, const std::vector<int>& idxs,
                           size_t region_head, int limit, int* out_n = nullptr) {
   int n = 0, ok = 0;
-  Rng rng(5);
   for (size_t k = 0; k < idxs.size() && (limit <= 0 || n < limit); ++k) {
     const Item& it = ds[(size_t)idxs[k]];
-    float margin = (float)rng.range(-0.02, 0.10);
-    std::vector<float> v = load_input(it, margin);
+    std::vector<float> v = load_input(it, EVAL_MARGIN);
     Tensor x = from_data({1, 3, 128, 128}, v);
     auto vals = onx::forward(t, x);
     const std::vector<float>& p = vals.at(t.heads[region_head])->data;
