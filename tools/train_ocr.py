@@ -295,6 +295,11 @@ def main():
     ap.add_argument("--eval-every", dest="eval_every", type=int, default=100)
     ap.add_argument("--eval-limit", dest="eval_limit", type=int, default=120)
     ap.add_argument("--export", default="")
+    ap.add_argument("--export-balanced", dest="export_balanced", default="",
+                    help="also write the checkpoint with the best synthetic region accuracy among "
+                         "those within --select-margin of the best real accuracy")
+    ap.add_argument("--select-margin", dest="select_margin", type=float, default=1.0,
+                    help="how many points of real hold-out accuracy --export-balanced may give up")
     ap.add_argument("--export-last", dest="export_last", default="",
                     help="also write the final-step model here (the --export one is the best real "
                          "hold-out checkpoint, which is usually an earlier step)")
@@ -395,6 +400,13 @@ def main():
     # peaks early and then slides (measured: 97.9% at step 500-1000, 95.8% by 2000).
     import copy
     best = {"acc": -1.0, "step": 0, "state": None}
+    # A second candidate, for the axis "real accuracy" cannot see: the region names that only synthetic
+    # teaches keep improving long after the real hold-out has peaked (v5: best real at step 750, best
+    # coverage at 3000). This keeps the checkpoint with the best synthetic region accuracy among those
+    # whose real accuracy is within --select-margin points of the best real seen so far, so coverage is
+    # bought only with accuracy we can afford. `best_real` grows as training goes, which makes the
+    # constraint slightly stricter over time — that is the safe direction.
+    bal = {"acc": -1.0, "syn": -1.0, "step": 0, "state": None}
     run_loss = None
     for step in range(1, a.steps + 1):
         lr = a.lr * (step / max(1, a.warmup)) if step <= a.warmup else \
@@ -426,11 +438,26 @@ def main():
                 full, per, n = eval_synth(model, sets[0], order, a.device, 120)
                 msg += "  synth whole %.1f%% region %.1f%% kind %.1f%%" % (
                     100 * full, 100 * per[0], 100 * per[9])
+            syn_reg = per[0] if (sets and isinstance(sets[0], SynthSet)) else -1.0
             if alpr and acc > best["acc"]:
                 best = {"acc": acc, "step": step,
                         "state": copy.deepcopy({k: v.detach().cpu() for k, v in model.state_dict().items()})}
                 msg += "  <- best"
+            if alpr and syn_reg > bal["syn"] and acc >= best["acc"] - a.select_margin / 100.0:
+                bal = {"acc": acc, "syn": syn_reg, "step": step,
+                       "state": copy.deepcopy({k: v.detach().cpu() for k, v in model.state_dict().items()})}
+                msg += "  <- balanced"
             print(msg, flush=True)
+
+    if a.export_balanced and bal["state"] is not None:
+        keep = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+        model.load_state_dict(bal["state"])
+        model.to(a.device)
+        print("exporting the BALANCED checkpoint: step %d, real %.1f%% / synth region %.1f%%"
+              % (bal["step"], 100 * bal["acc"], 100 * bal["syn"]))
+        export_onnx(model, order, a.export_balanced)
+        model.load_state_dict(keep)
+        model.to(a.device)
 
     if a.export_last:
         # The best-real-accuracy checkpoint and the last one are not the same model, and which one is
