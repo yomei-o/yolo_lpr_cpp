@@ -54,6 +54,9 @@ def main():
     ap.add_argument("--export", default="")
     ap.add_argument("--export-imgsz", dest="export_imgsz", type=int, action="append", default=[])
     ap.add_argument("--yaml", default="scratch/plate_det.yaml")
+    ap.add_argument("--export-only", dest="export_only", default="",
+                    help="skip training and export this .pt (recover from a failed export without "
+                         "paying for the epochs again)")
     a = ap.parse_args()
     if not a.data:
         raise SystemExit("pass at least one --data <dir with images/ and labels/>")
@@ -66,15 +69,22 @@ def main():
         return 2
 
     os.makedirs(os.path.dirname(a.yaml) or ".", exist_ok=True)
-    yaml_path = write_data_yaml(a.yaml, a.data, a.val or a.data[-1], a.imgsz)
+    yaml_path = write_data_yaml(a.yaml, a.data, a.val or a.data[-1], a.imgsz) if a.data else ""
 
-    model = YOLO(a.weights)
-    model.train(data=yaml_path, epochs=a.epochs, imgsz=a.imgsz, batch=a.batch, lr0=a.lr,
-                project=a.project, name=a.name, exist_ok=True,
-                # plates are small and thin: keep mosaic, drop vertical flips, keep scale jitter wide
-                mosaic=1.0, fliplr=0.5, flipud=0.0, degrees=5.0, scale=0.6, translate=0.15,
-                hsv_h=0.015, hsv_s=0.6, hsv_v=0.4, close_mosaic=10)
-    best = os.path.join(a.project, a.name, "weights", "best.pt")
+    if a.export_only:
+        best = a.export_only
+    else:
+        model = YOLO(a.weights)
+        model.train(data=yaml_path, epochs=a.epochs, imgsz=a.imgsz, batch=a.batch, lr0=a.lr,
+                    project=a.project, name=a.name, exist_ok=True,
+                    # plates are small and thin: keep mosaic, drop vertical flips, wide scale jitter
+                    mosaic=1.0, fliplr=0.5, flipud=0.0, degrees=5.0, scale=0.6, translate=0.15,
+                    hsv_h=0.015, hsv_s=0.6, hsv_v=0.4, close_mosaic=10)
+        # Ask the trainer where it actually put the weights. Composing project/name/weights/best.pt is
+        # wrong whenever Ultralytics' settings prepend a runs_dir (it wrote runs/detect/runs/det/plate,
+        # and a 71-minute training run then died at the export step for want of this line).
+        best = str(getattr(model.trainer, "best", "") or
+                   os.path.join(a.project, a.name, "weights", "best.pt"))
     print("best weights: %s" % best)
 
     if a.export:
