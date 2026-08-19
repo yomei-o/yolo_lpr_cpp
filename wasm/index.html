@@ -58,7 +58,7 @@
   </label>
   <label>認識器
     <select id="ocrsel">
-      <option value="v4">実データ重視（地名 97.9%／2025年の新地名は読めない）</option>
+      <option value="v4">実データ重視（地名 97.9%／2025年の新地名は 28%）</option>
       <option value="v6">新地名対応（十勝・日光・江戸川・安曇野・南信州を 76%／地名 95.1%）</option>
     </select>
   </label>
@@ -91,11 +91,14 @@ const DETECTORS = {
 };
 // Two recognisers, because the trade-off is real and small enough to let the user pick. Measured on
 // 144 real hold-out crops and 100 synthetic crops of the five names added in 2025:
-//   v4       real 97.9%  new names  1/100   (3 errors, all on names with >=12 training photos)
+//   v7_bal   real 97.9%  new names 28/100   (3 errors — the *same three crops* v4 misses, no regression)
 //   v6_last  real 95.1%  new names 76/100   (7 errors; 3 of the 4 extra ones are names with <=3 photos,
 //                                            but one is 長崎 -> 大阪, which has 75 photos)
+// v7_bal came out of `--export-balanced`: the checkpoint with the best synthetic region accuracy among
+// those within 1.5 points of the best real accuracy. It replaced v4 outright (same accuracy, same
+// mistakes, 28x the reads on the 2025 names).
 const OCRS = {
-  v4: { path: '../models/plate_ocr_v4.onnx', label: '実データ重視 (v4)' },
+  v4: { path: '../models/plate_ocr_v7_bal.onnx', label: '実データ重視 (v7_bal)' },
   v6: { path: '../models/plate_ocr_v6_last.onnx', label: '新地名対応 (v6_last)' },
 };
 const CORNER = '../models/plate_corner.onnx';

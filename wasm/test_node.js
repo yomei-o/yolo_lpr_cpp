@@ -23,7 +23,7 @@ const DET_PATH = process.env.DET_PATH || path.join(ROOT, 'models', 'plate_det_py
 // 練馬 instead of 横浜. CORNER_PATH=none turns it off deliberately.
 const CORNER_PATH = process.env.CORNER_PATH || path.join(ROOT, 'models', 'plate_corner.onnx');
 // keep this in step with wasm/index.html's OCR const, or the test grades a model nobody runs
-const OCR_PATH = process.env.OCR_PATH || path.join(ROOT, 'models', 'plate_ocr_v4.onnx');
+const OCR_PATH = process.env.OCR_PATH || path.join(ROOT, 'models', 'plate_ocr_v7_bal.onnx');
 
 function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
 
