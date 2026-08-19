@@ -136,11 +136,17 @@ class AlprSet:
         self.val_idx = sorted(order[cut:])
 
     def margin(self, rng):
-        return rng.range(-0.02, 0.10)
+        # Three draws, in this order: crop margin, brightness, contrast. The C++ trainer draws the
+        # same three for a real sample (pure/train_ocr.hpp), which is what keeps the step-by-step
+        # loss parity. 576 real crops seen thousands of times overfit fast without this: the first
+        # GPU run peaked at 97.9% (step 500-1000) and slid to 95.8% by step 2000.
+        return (rng.range(-0.04, 0.12), rng.range(0.75, 1.25), rng.range(0.85, 1.15))
 
-    def load(self, i, margin):
+    def load(self, i, aug):
         path, region = self.items[i][0], self.items[i][1]
+        margin, bright, contrast = aug if isinstance(aug, tuple) else (aug, 1.0, 1.0)
         x = load_crop(path, None, margin)
+        x = np.clip(((x - 0.5) * contrast + 0.5) * bright, 0.0, 1.0).astype(np.float32)
         heads = [0] * 11
         heads[0] = region
         mask = [1] + [0] * 10                           # region only
@@ -279,6 +285,8 @@ def main():
     ap.add_argument("--eval-limit", dest="eval_limit", type=int, default=120)
     ap.add_argument("--export", default="")
     ap.add_argument("--save", default="")
+    ap.add_argument("--keep-last", dest="keep_last", action="store_true",
+                    help="export the final weights instead of the best hold-out checkpoint")
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--workers", type=int, default=0,
@@ -354,6 +362,10 @@ def main():
         print("step 0 (shipped weights): real hold-out region top1 %.1f%% over %d crops"
               % (100 * acc0, n0))
 
+    # Keep the best hold-out checkpoint, not the last one: with only 576 real crops the region head
+    # peaks early and then slides (measured: 97.9% at step 500-1000, 95.8% by 2000).
+    import copy
+    best = {"acc": -1.0, "step": 0, "state": None}
     run_loss = None
     for step in range(1, a.steps + 1):
         lr = a.lr * (step / max(1, a.warmup)) if step <= a.warmup else \
@@ -385,11 +397,23 @@ def main():
                 full, per, n = eval_synth(model, sets[0], order, a.device, 120)
                 msg += "  synth whole %.1f%% region %.1f%% kind %.1f%%" % (
                     100 * full, 100 * per[0], 100 * per[9])
+            if alpr and acc > best["acc"]:
+                best = {"acc": acc, "step": step,
+                        "state": copy.deepcopy({k: v.detach().cpu() for k, v in model.state_dict().items()})}
+                msg += "  <- best"
             print(msg, flush=True)
 
     if alpr and not a.dump_loss:
         acc, n = eval_region(model, alpr, order, alpr.val_idx, a.device, 0)
-        print("final: real hold-out region top1 %.1f%% over %d crops" % (100 * acc, n))
+        print("final (last step): real hold-out region top1 %.1f%% over %d crops" % (100 * acc, n))
+        if acc > best["acc"]:
+            best = {"acc": acc, "step": a.steps,
+                    "state": {k: v.detach().cpu() for k, v in model.state_dict().items()}}
+        if best["state"] is not None and not a.keep_last:
+            model.load_state_dict(best["state"])
+            model.to(a.device)
+            print("exporting the BEST checkpoint: step %d, real hold-out region top1 %.1f%%"
+                  % (best["step"], 100 * best["acc"]))
     if a.save:
         torch.save(model.state_dict(), a.save)
         print("saved %s" % a.save)

@@ -362,13 +362,14 @@ static int cmd_train(int argc, char** argv) {
   std::vector<const std::vector<int>*> pools;
   std::vector<double> weights;
   std::vector<std::pair<double, double>> margins;
+  std::vector<bool> photo;
   if (!synth_items.empty()) {
     sets.push_back(&synth_items); pools.push_back(nullptr);
-    weights.push_back(1.0 - real_w); margins.push_back({-0.03, 0.12});
+    weights.push_back(1.0 - real_w); margins.push_back({-0.03, 0.12}); photo.push_back(false);
   }
   if (!alpr_items.empty()) {
     sets.push_back(&alpr_items); pools.push_back(&alpr_train);
-    weights.push_back(real_w); margins.push_back({-0.02, 0.10});
+    weights.push_back(real_w); margins.push_back({-0.04, 0.12}); photo.push_back(true);
   }
 
   // head tensors get lr, the pretrained backbone gets lr*mult (same split as the Python trainer)
@@ -398,7 +399,7 @@ static int cmd_train(int argc, char** argv) {
     float cur = step <= 1 ? lr : lr;                        // constant lr keeps the parity simple
     opt_head.lr = cur;
     opt_bb.lr = cur * bb_mult;
-    trn::Batch b = trn::make_batch(sets, pools, weights, margins, batch, rng);
+    trn::Batch b = trn::make_batch(sets, pools, weights, margins, photo, batch, rng);
     auto vals = onx::forward(t, b.x);
     Tensor loss = onx::multihead_ce(vals, t, b.labels, b.mask);
     if (!loss) continue;
