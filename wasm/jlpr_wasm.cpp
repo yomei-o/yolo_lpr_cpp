@@ -5,6 +5,7 @@
 // build: sh build/emcc.sh wasm/jlpr_wasm.cpp -o wasm/jlpr.js
 #include "spec.hpp"
 #include "pipeline.hpp"
+#include "track.hpp"
 #include <emscripten/emscripten.h>
 #include <string>
 #include <vector>
@@ -14,6 +15,10 @@ static bool g_det_ok = false, g_ocr_ok = false, g_corner_ok = false;
 static spec::Spec g_spec;
 static bool g_spec_ok = false;
 static std::string g_result = "{}";
+static std::vector<jl::Box> g_last_boxes;
+static std::vector<std::vector<std::vector<float>>> g_last_probs;
+static jl::Tracker g_tracker;
+static jl::TrackerCfg g_tcfg;
 
 extern "C" {
 
@@ -78,6 +83,8 @@ EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float c
     boxes = jl::detect_plates(g_det, rgb.data(), w, h, cfg);
   }
 
+  g_last_boxes = boxes;
+  g_last_probs.clear();
   std::vector<jl::Read> reads;
   jl::CornerCfg ccfg;
   for (const jl::Box& b : boxes) {
@@ -89,11 +96,28 @@ EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float c
                           : jl::read_plate_single(g_ocr, g_spec, rgb.data(), w, h, b.x1, b.y1, b.x2, b.y2));
     }
   }
+  for (const jl::Read& r : reads) g_last_probs.push_back(r.probs);
   std::string o = jl::plates_json(boxes, reads);
   g_result = o;
   return (int)boxes.size();
 }
 
 EMSCRIPTEN_KEEPALIVE const char* jl_result() { return g_result.c_str(); }
+
+EMSCRIPTEN_KEEPALIVE void jl_track_reset() { g_tracker.reset(); }
+
+// One live frame: detect, read, fold into the tracks. The reading of a track improves as it is seen
+// for longer, because the per-head probabilities are summed over its frames (see track.hpp).
+EMSCRIPTEN_KEEPALIVE int jl_track_step(const unsigned char* rgba, int w, int h, float conf, int tta,
+                                      int det_kind) {
+  int n = jl_run(rgba, w, h, conf, tta, -1, -1, -1, -1, det_kind);
+  if (n < 0) return n;
+  // jl_run already filled g_last_boxes/g_last_reads for this frame
+  g_tracker.update(g_last_boxes, g_last_probs, g_spec, g_tcfg);
+  g_result = jl::tracks_json(g_tracker, g_tcfg);
+  return (int)g_tracker.tracks().size();
+}
+
+EMSCRIPTEN_KEEPALIVE const char* jl_tracks() { return g_result.c_str(); }
 
 }  // extern "C"
