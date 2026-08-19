@@ -18,6 +18,7 @@
 // stb_image.h is intentionally not included here (its implementation block sits outside the include
 // guard, so a second include in the same TU breaks the build) — the including .cpp pulls it in.
 #include <algorithm>
+#include <array>          // std::array is used below; MSVC 14.31 does not pull it in transitively
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -80,6 +81,22 @@ inline std::vector<unsigned char> read_file(const std::string& path) {
   }
   fclose(f);
   return out;
+}
+
+// Write a whole file, UTF-8 path safe — the mirror of read_file(). std::ofstream takes the path
+// through the ANSI code page on Windows, so any directory with Japanese in it (the parity tests use
+// tempfile.TemporaryDirectory(), which lands under C:/Users/<name>/AppData/Local/Temp) silently
+// fails to open and the caller writes nothing.
+inline bool write_file(const std::string& path, const void* data, size_t n) {
+#ifdef _WIN32
+  FILE* f = _wfopen(to_w(path).c_str(), L"wb");
+#else
+  FILE* f = fopen(path.c_str(), "wb");
+#endif
+  if (!f) return false;
+  const bool ok = n == 0 || fwrite(data, 1, n, f) == n;
+  fclose(f);
+  return ok;
 }
 
 inline std::vector<std::string> list_dir(const std::string& dir, bool want_dirs) {
