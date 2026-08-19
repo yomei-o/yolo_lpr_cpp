@@ -38,8 +38,9 @@ EMSCRIPTEN_KEEPALIVE int jl_load_spec(const char* text) {
 // Run on an RGBA frame (w*h*4, canvas order). tta=0 reads one crop, 1 reads the margin spread.
 // box_* < 0 means "detect"; otherwise the detector is skipped and that box is read directly
 // (the page's 「枠を手で指定」 path, which is how a hand-held close-up gets read at all).
+// det_kind: 0 = the interim YOLOX graph, 1 = a [1,4+nc,N] YOLOv8/v12-style head (NMS stripped).
 EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float conf, int tta,
-                                float bx0, float by0, float bx1, float by1) {
+                                float bx0, float by0, float bx1, float by1, int det_kind) {
   if (!g_ocr_ok || !g_spec_ok) { g_result = "{\"error\":\"models not loaded\"}"; return -1; }
   std::vector<unsigned char> rgb((size_t)w * h * 3);
   for (size_t i = 0, n = (size_t)w * h; i < n; ++i) {
@@ -55,6 +56,7 @@ EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float c
     if (!g_det_ok) { g_result = "{\"error\":\"detector not loaded\"}"; return -1; }
     jl::DetCfg cfg;
     cfg.conf = conf;
+    if (det_kind == 1) { cfg.kind = jl::DetKind::V8; cfg.nc = 1; cfg.plate_class = 0; cfg.imgsz = 0; }
     boxes = jl::detect_plates(g_det, rgb.data(), w, h, cfg);
   }
 

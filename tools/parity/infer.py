@@ -71,12 +71,13 @@ def head_level(ocr_onnx, ref_dir):
     return ok, "onnxruntime vs fixture: worst %.3e, argmax %d/%d" % (worst, argok, len(outs))
 
 
-def pipeline_level(jlpr, img, det, ocr, spec, conf):
+def pipeline_level(jlpr, img, det, ocr, spec, conf, det_kind):
     c = json.loads(run([jlpr, "detect", "--img", img, "--det", det, "--ocr", ocr,
-                        "--spec", spec, "--conf", str(conf), "--json"]).decode("utf-8"))
+                        "--spec", spec, "--conf", str(conf), "--det-kind", det_kind,
+                        "--json"]).decode("utf-8"))
     p = json.loads(run([sys.executable, os.path.join(ROOT, "tools", "infer.py"), "--img", img,
                         "--det", det, "--ocr", ocr, "--spec", spec, "--conf", str(conf),
-                        "--json"]).decode("utf-8"))
+                        "--det-kind", det_kind, "--json"]).decode("utf-8"))
     cp, pp = c["plates"], p["plates"]
     msgs, ok = [], True
     if len(cp) != len(pp):
@@ -111,11 +112,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--jlpr", default=os.path.join(ROOT, "jlpr.exe"))
     ap.add_argument("--img", default=os.path.join(ROOT, "assets", "tokyu-bus-yokohama200ka3591.jpg"))
-    ap.add_argument("--det", default=os.path.join(ROOT, "models", "plate_det_yolox.onnx"))
+    ap.add_argument("--det", default=os.path.join(ROOT, "models", "plate_det_pyj320.onnx"))
+    ap.add_argument("--det-kind", dest="det_kind", default="v8")
     ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr.onnx"))
     ap.add_argument("--spec", default=os.path.join(ROOT, "spec", "labels.txt"))
     ap.add_argument("--ref", default="")
-    ap.add_argument("--conf", type=float, default=0.15)
+    ap.add_argument("--conf", type=float, default=0.30)
     a = ap.parse_args()
     if not os.path.exists(a.jlpr):
         print("no jlpr binary at %s — build it first (sh build/gcc.sh pure/jlpr.cpp -o jlpr.exe)" % a.jlpr)
@@ -130,7 +132,7 @@ def main():
     else:
         print("head level:   skipped (pass --ref <lpr_cpp>/pure/ref to run it)")
 
-    ok, msgs = pipeline_level(a.jlpr, a.img, a.det, a.ocr, a.spec, a.conf)
+    ok, msgs = pipeline_level(a.jlpr, a.img, a.det, a.ocr, a.spec, a.conf, a.det_kind)
     print("pipeline level: %s" % ("MATCH" if ok else "DIFFER"))
     for m in msgs:
         sys.stdout.buffer.write((m + "\n").encode("utf-8"))

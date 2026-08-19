@@ -61,4 +61,27 @@ inline Tensor letterbox_bgr(const unsigned char* rgb, int W, int H, int S, float
   return t;
 }
 
+// Plain resize (no letterbox) into RGB 0-1 — what an Ultralytics-style export of PlateYOLO-JP was
+// fed at training time. Aspect ratio is NOT preserved, so boxes map back with separate x/y scales.
+inline Tensor resize_rgb01(const unsigned char* rgb, int W, int H, int iw, int ih) {
+  Tensor t = make_tensor({1, 3, ih, iw}, false);
+  auto px = [&](int yy, int xx, int c) {
+    yy = std::clamp(yy, 0, H - 1); xx = std::clamp(xx, 0, W - 1);
+    return (float)rgb[((size_t)yy * W + xx) * 3 + c];
+  };
+  for (int y = 0; y < ih; ++y)
+    for (int x = 0; x < iw; ++x) {
+      const float sx = (x + 0.5f) * ((float)W / iw) - 0.5f;
+      const float sy = (y + 0.5f) * ((float)H / ih) - 0.5f;
+      const int xi = (int)std::floor(sx), yi = (int)std::floor(sy);
+      const float fx = sx - xi, fy = sy - yi;
+      for (int c = 0; c < 3; ++c) {
+        const float v = px(yi, xi, c) * (1 - fx) * (1 - fy) + px(yi, xi + 1, c) * fx * (1 - fy)
+                      + px(yi + 1, xi, c) * (1 - fx) * fy + px(yi + 1, xi + 1, c) * fx * fy;
+        t->data[(size_t)((c * ih + y) * iw + x)] = v / 255.f;
+      }
+    }
+  return t;
+}
+
 }  // namespace jl

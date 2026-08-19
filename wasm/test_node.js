@@ -13,7 +13,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const fixture = process.argv[2] || path.join(ROOT, 'scratch', 'sample.rgba');
 const expect = process.argv[3] || '横浜 200 か 3591';
-const EXPECT_BOX = [250, 407, 337, 465];   // from `jlpr detect` on the same image
+const EXPECT_BOX = [248, 414, 321, 463];   // from `jlpr detect` on the same image
 
 function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
 
@@ -42,7 +42,7 @@ function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
     return r;
   };
   const ocrNodes = load(path.join(ROOT, 'models', 'plate_ocr.onnx'), M._jl_load_ocr);
-  const detNodes = load(path.join(ROOT, 'models', 'plate_det_yolox.onnx'), M._jl_load_det);
+  const detNodes = load(path.join(ROOT, 'models', 'plate_det_pyj320.onnx'), M._jl_load_det);
   console.log('loaded: spec ' + groups + ' groups, ocr ' + ocrNodes + ' nodes, det ' + detNodes + ' nodes');
 
   const raw = fs.readFileSync(fixture);
@@ -53,7 +53,7 @@ function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
   M.HEAPU8.set(px, pf);
 
   const t0 = Date.now();
-  const nplates = M._jl_run(pf, w, h, 0.15, 1, -1, -1, -1, -1);
+  const nplates = M._jl_run(pf, w, h, 0.30, 1, -1, -1, -1, -1, 1);   // det_kind 1 = v8 head
   const secs = (Date.now() - t0) / 1000;
   const res = JSON.parse(M.UTF8ToString(M._jl_result()));
   M._free(pf);

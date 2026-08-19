@@ -179,15 +179,23 @@ static int cmd_rgba(int argc, char** argv) {
 
 static int cmd_detect(int argc, char** argv) {
   std::string img = arg_of(argc, argv, "--img", "");
-  std::string det_p = arg_of(argc, argv, "--det", "models/plate_det.onnx");
+  std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_pyj320.onnx");
   std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr.onnx");
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string outp = arg_of(argc, argv, "--out", "");
   bool single = has_flag(argc, argv, "--single");
   bool as_json = has_flag(argc, argv, "--json");   // machine-readable, same shape as the WASM/Python output
+  std::string kind = arg_of(argc, argv, "--det-kind", "v8");
   jl::DetCfg cfg;
-  cfg.conf = (float)atof(arg_of(argc, argv, "--conf", "0.15").c_str());
-  cfg.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "416").c_str());
+  cfg.conf = (float)atof(arg_of(argc, argv, "--conf", "0.30").c_str());
+  if (kind == "v8") {          // plate-only YOLOv8/v11/v12 head, size taken from the graph
+    cfg.kind = jl::DetKind::V8;
+    cfg.nc = 1;
+    cfg.plate_class = 0;
+    cfg.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "0").c_str());
+  } else {
+    cfg.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "416").c_str());
+  }
   if (img.empty()) {
     printf("usage: jlpr detect --img <file> [--det onnx] [--ocr onnx] [--out png] [--conf f] [--single] [--json]\n");
     return 1;
