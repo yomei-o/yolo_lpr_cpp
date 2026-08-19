@@ -193,7 +193,8 @@ def _draw_text(d, font_path, text, cx, cy, px_h, colour, track=0.06, max_w=0):
 
 def plate_texture(p, sp, font_path, rng):
     from PIL import Image, ImageDraw
-    mm = 2.0
+    # same rule as gen_render.hpp: texture resolution follows the plate's on-screen size
+    mm = min(2.5, max(0.5, 2.0 * p.plate_px / 330.0))
     W_mm, H_mm = (440.0, 220.0) if p.large else (330.0, 165.0)
     W, H = int(W_mm * mm), int(H_mm * mm)
     r = (13.0 if p.large else 10.0) * mm

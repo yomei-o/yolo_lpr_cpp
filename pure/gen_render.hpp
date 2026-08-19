@@ -194,7 +194,10 @@ inline void fill_circle(Img& im, float cx, float cy, float r, Rgb c) {
 // ---- plate texture (flat art, 2 px/mm) -------------------------------------------------------
 inline Img plate_texture(const Params& p, const spec::Spec& sp, const std::vector<Font>& fonts,
                          int font_idx, Rng& rng) {
-  const float mm = 2.0f;                                  // px per mm
+  // Resolution follows how big the plate will actually appear: drawing 660x330 art for a plate that
+  // lands 30 px wide is ~20x wasted work, and the downsampling throws the detail away anyway. Two
+  // texture pixels per destination pixel is enough for clean bilinear minification.
+  const float mm = std::clamp((float)(2.0 * p.plate_px / 330.0), 0.5f, 2.5f);   // px per mm
   const float W_mm = p.large ? 440.f : 330.f, H_mm = p.large ? 220.f : 165.f;
   const int W = (int)(W_mm * mm), H = (int)(H_mm * mm);
   Img im(W, H, {90, 90, 90});
