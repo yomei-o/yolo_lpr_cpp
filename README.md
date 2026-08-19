@@ -42,12 +42,22 @@ python -m http.server 8000     # リポジトリのルートから → http://lo
 node wasm/test_node.js         # ヘッドレスの回帰テスト（CLI と同じ画素で同じ文字列を assert）
 ```
 
-実測（実写 960×640、CPU 1 スレッド）: CLI **5.6 秒** / WASM(node, SIMD) **3.82 秒** で
-`横浜 200 か 3591`。内訳は検出 416px が大半、認識は 6 クロップ合算。
+実測（実写 960×640、CPU 1 スレッド）: CLI **2.4 秒** / WASM(node, SIMD) **4.5 秒** で
+`横浜 200 か 3591`。内訳は検出 320px と 6 クロップ分の認識。
 
-**まだ暫定なところ**: 検出器は `lpr_cpp` の交通カメラ由来 YOLOX-tiny（8クラス、class 7 = plate）を
-そのまま使っている。yolov8n nc=1 に差し替えるのは M7。4隅補正（M6）も未実装なので、地域名 head の
-信頼度はこの写真で 0.57 しかない（他の head は 1.00）——「なぜ 4隅補正を足すのか」がそのまま数字に出ている。
+**まだ暫定なところ**: 検出器は [PlateYOLO-JP](https://github.com/Kazuhito00/PlateYOLO-JP-Prototype)
+（YOLO12・AGPL-3.0）の NMS を剥がしたものを借りている（`tools/strip_nms.py`）。自前 yolov8n nc=1 に
+差し替えるのは M7 で、**それが超えるべき基準がこの暫定検出器**。4隅補正（M6）も未実装。
+
+参考までに、検出器を替えただけで認識側が受ける影響（同じ写真・同じ認識器）:
+
+| 検出器 | 誤検出 | 地域名 conf | CLI 時間 |
+|---|---|---|---|
+| YOLOX-tiny 416（`lpr_cpp` 由来・最初の暫定） | 1 件 (det 0.24) | **0.57** | 5.6 秒 |
+| PlateYOLO-JP 320（NMS 剥がし・現行） | 0 件 | **0.92** | 2.4 秒 |
+
+box が良くなるだけで地域名の信頼度が 0.57 → 0.92 に動く。**入力の正規化が精度を支配している**という
+仮説の裏付けで、4隅補正（M6）を入れる理由がそのまま数字で出ている。
 
 ## パイプライン（3段）
 
@@ -138,6 +148,8 @@ head 追加は分岐の GAP 出力に Dense を足すだけなので、既存 ba
 | [Number Plate in Japan (Roboflow, 2,196枚)](https://universe.roboflow.com/moriken/number-plate-in-japan), [license-plate-japan](https://universe.roboflow.com/new-workspace-vijtn/license-plate-japan) | 日本車の全景＋プレート box | **要確認**（RESUME の未確認事項） | 検出器の学習・評価 |
 | Open Images V7 `Vehicle registration plate` | 全世界のプレート box（大量） | 画像 CC BY 2.0 / 注釈 CC BY 4.0 | 検出器の量稼ぎ（日本以外も形状は近い） |
 | 自前撮影 | 黒・黄プレート、近接、夜間 | 自前 | 弱点の埋め合わせと最終評価 |
+| [PlateYOLO-JP](https://github.com/Kazuhito00/PlateYOLO-JP-Prototype) の検出器 | ラベルではなく**教師**（車写真に自動で box を付ける） | AGPL-3.0 | 検出データの自動ラベル付け。Python 側だけで動かす（NMS 入りグラフのため） |
+| 同リポの EkMixer 認識器 | 疑似ラベルの**第二意見** | AGPL-3.0 | 自前モデルと一致した読みだけ採用し、不一致だけ人が見る |
 
 ### 生成する（合成）
 生成器は Python と C++ の両方に置く（`tools/gen.py` / `pure/gen.cpp`）。プレート**画像そのもの**と**車体に貼った全景**の両方を出す。
@@ -156,12 +168,25 @@ head 追加は分岐の GAP 出力に Dense を足すだけなので、既存 ba
 
 目標値: 検出 mAP@0.5 ≥ 0.95（色別 recall も ≥ 0.90）、認識は**プレート全文一致 ≥ 95%**、region ≥ 98%（TTA なし）。
 
+### 認識器はどれを使うか — 実データで測って決めた（2026-08-19）
+`alpr_jp` の地域名ラベル付き **720 枚**で 2 つの既存モデルを比較（`python tools/eval_ocr.py --data <alpr_jp>`）:
+
+| 認識器 | region top1（1クロップ） | region top1（6クロップTTA） | top3(TTA) |
+|---|---|---|---|
+| 自前 `plate_ocr`（`lpr_cpp` 由来・128ch dwsep-ResNet, 1.3MB） | **89.2%** | **92.5%** | 96.1% |
+| EkMixer（PlateYOLO-JP 同梱・1.0MB） | 76.1% | 81.2% | 88.2% |
+
+→ **自前を base に微調整する**方針で確定（M5）。EkMixer は捨てずに疑似ラベルの第二意見として使う
+（両者の一致率 81.4%、両方正解 80.1% ＝ 不一致の 2 割弱に人手を集中させられる）。
+
 ## 実装（同じ機能を2系統）
 
 ```
 spec/      labels.txt                地名/かな/分類番号/種別の唯一の定義（C++・Python 両方をここから生成）
            pipeline.md               入出力・前処理・マージン・閾値の仕様（両実装が従う）
-pure/      onnx.hpp / onnx_run.hpp   ONNX リーダ（ファイル/メモリ）＋統合インタプリタ  ✅
+pure/      onnx.hpp / onnx_run.hpp   ONNX リーダ（ファイル/メモリ/入力次元）＋統合インタプリタ  ✅
+           nd.hpp                    N次元 op（transpose/softmax/matmul/broadcast、推論専用）  ✅
+           infer_v8.hpp              [1,4+nc,N] head の decode+NMS（v8/v11/v12 共通）  ✅
            onnx_export_lpr.hpp       認識器の重み(manifest+weights.bin) → ONNX  ✅
            autograd/…                自作 autograd・conv・BN・Adam（姉妹リポから移植）
            infer_yolox.hpp           暫定検出器の decode+NMS  ✅（yolov8 用は M7 で追加）
@@ -170,9 +195,9 @@ pure/      onnx.hpp / onnx_run.hpp   ONNX リーダ（ファイル/メモリ）�
            pipeline.hpp              detect → crop → classify → 文字列＋信頼度  ✅
            gen.cpp                   合成データ生成（C++ 版、M4）
            jlpr.cpp                  CLI: labels / export / parity-ocr / detect / rgba  ✅
-tools/     labels.py rng.py jlpr.py  ✅ / gen.py train_*.py eval.py  (M4 以降)
+tools/     labels.py rng.py jlpr.py infer.py eval_ocr.py strip_nms.py  ✅ / gen.py train_*.py  (M4 以降)
            parity/labels.py          ラベル表の一致テスト ✅（生成・loss・推論は今後）
-models/    plate_det_yolox.onnx ✅(暫定) / plate_ocr.onnx ✅ / plate_corner.onnx (M6)
+models/    plate_det_pyj320.onnx ✅(暫定・借り物) / plate_ocr.onnx ✅ / plate_corner.onnx (M6)
 wasm/      jlpr_wasm.cpp + index.html + test_node.js  ✅（カメラ/ファイル/手動枠/PNG保存）
 ```
 - C++ ビルドは単一 TU、`cl /std:c++20 /O2` ／ `g++ -std=c++20 -O2` ／ `emcc -msimd128`。`-DUSE_EIGEN` で CPU 高速化、`-DUSE_CUDA` で GPU
@@ -187,6 +212,8 @@ wasm/      jlpr_wasm.cpp + index.html + test_node.js  ✅（カメラ/ファイ�
 | 地域名 head の余白依存 | 同じ写真が 奄美 / 横浜 / 練馬 と入れ替わる | 4隅補正＋固定マージン（本リポの2段目） |
 | 検出器のプレート色バイアス | 白 0.85 / 黄 0.40 / **黒 0.21**（同一写真・色だけ変更） | 学習データの色均衡＋色別 recall を常時報告 |
 | 近接プレートが取れない | 画面幅の 5–12% が最良帯、46% だと score 0.02 で誤位置 | 車ごと写る画角と近接の両方を学習データに入れる。2パス検出は任意 |
+| **box の質が地域名 head を支配する** | 検出器を替えただけで地域名 conf 0.57 → 0.92（同じ写真・同じ認識器） | 4隅補正で入力正規化を固定する（M6）。認識器の精度議論の前に box を疑う |
+| 自作 ONNX インタプリタの float 誤差 | 認識器 3.3e-05 / 検出器 3e-03（onnxruntime は同じ ONNX で 7.5e-09） | 強い検出には影響しないが、閾値ぎりぎりの box では読みが両実装で割れる。パリティテストの許容幅はそれを前提に設定 |
 | ネガだけのテスト | 灰色一枚で box 0 件 → 検出器が壊れていても通る | 実写フィクスチャで位置・スコアの決定性・散らばりの無さを assert |
 
 ## 法務・プライバシー
