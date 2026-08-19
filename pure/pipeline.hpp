@@ -10,6 +10,7 @@
 #include "onnx.hpp"
 #include "onnx_run.hpp"
 #include "infer_yolox.hpp"
+#include "infer_v8.hpp"
 #include "crop.hpp"
 #include "spec.hpp"
 #include <algorithm>
@@ -22,9 +23,18 @@ namespace jl {
 // The interim detector is lpr_cpp's ReLU plate yolox-tiny (8 classes, class 7 = plate) at 416.
 // It is ONNX-fed, so its head already carries probabilities: logits=false. A yolov8 nc=1
 // detector replaces it at M6 (see RESUME) — the box interface here does not change.
+// Two detector kinds are supported, because the two available graphs are shaped differently:
+//   YOLOX  — the interim ReLU plate yolox-tiny: letterbox 416, BGR 0-255, three per-level heads
+//            that this code decodes (anchor-free, obj*cls, already sigmoided in the ONNX).
+//   V8     — a YOLOv8/v11/v12 head: plain resize, RGB 0-1, one [1,4+nc,N] tensor already carrying
+//            pixel-space boxes and sigmoided scores. PlateYOLO-JP with the NMS tail stripped is
+//            this shape, and so is our own detector once M7 trains it.
+enum class DetKind { YOLOX, V8 };
+
 struct DetCfg {
-  int imgsz = 416;
-  int plate_class = 7;
+  DetKind kind = DetKind::YOLOX;
+  int imgsz = 416;                    // 0 = take it from the graph's declared input dims
+  int plate_class = 7;                // YOLOX: 8 classes, plate is 7. V8 plate-only: 0
   float conf = 0.15f;                 // low on purpose: black/yellow plates score ~1/4 of white
   float nms = 0.45f;
   bool logits = false;
@@ -32,24 +42,55 @@ struct DetCfg {
                                     "/head/Concat_2_output_0"};
   std::vector<int64_t> strides = {8, 16, 32};
   int64_t nc = 8;
+  std::string v8_out;                 // empty = the graph's first declared output
+  BoxFmt v8_fmt = BoxFmt::XYXY;
 };
 
 struct Box { float x1, y1, x2, y2, score; };
 
+// Input size the graph itself declares (NCHW); 0 if dynamic/unknown.
+inline void graph_input_hw(const onx::Graph& g, int& iw, int& ih) {
+  iw = ih = 0;
+  for (const auto& vi : g.inputs) {
+    if (vi.dims.size() == 4 && vi.dims[2] > 0 && vi.dims[3] > 0) {
+      ih = (int)vi.dims[2];
+      iw = (int)vi.dims[3];
+      return;
+    }
+  }
+}
+
 inline std::vector<Box> detect_plates(const onx::Graph& det, const unsigned char* rgb, int W, int H,
                                       const DetCfg& cfg, std::vector<Det>* all_out = nullptr) {
-  float scale = 1.f;
-  Tensor x = letterbox_bgr(rgb, W, H, cfg.imgsz, scale);
-  std::set<std::string> stop(cfg.heads.begin(), cfg.heads.end());
-  auto vals = onx::run_onnx(det, x, stop);
-  std::vector<Tensor> raw;
-  for (auto& h : cfg.heads) raw.push_back(vals.at(h));
-  std::vector<Det> dets = yolox_detect(raw, cfg.strides, cfg.nc, cfg.conf, cfg.nms, cfg.logits);
+  std::vector<Det> dets;
+  float sx = 1.f, sy = 1.f;                                  // net pixels -> image pixels
+  if (cfg.kind == DetKind::YOLOX) {
+    float scale = 1.f;
+    Tensor x = letterbox_bgr(rgb, W, H, cfg.imgsz, scale);
+    std::set<std::string> stop(cfg.heads.begin(), cfg.heads.end());
+    auto vals = onx::run_onnx(det, x, stop);
+    std::vector<Tensor> raw;
+    for (auto& h : cfg.heads) raw.push_back(vals.at(h));
+    dets = yolox_detect(raw, cfg.strides, cfg.nc, cfg.conf, cfg.nms, cfg.logits);
+    sx = sy = 1.f / scale;
+  } else {
+    int iw = 0, ih = 0;
+    graph_input_hw(det, iw, ih);
+    if (cfg.imgsz > 0) { iw = ih = cfg.imgsz; }
+    if (iw <= 0 || ih <= 0) { printf("detect_plates: cannot tell the V8 graph's input size\n"); std::exit(1); }
+    Tensor x = resize_rgb01(rgb, W, H, iw, ih);
+    std::string out = cfg.v8_out.empty() ? (det.outputs.empty() ? std::string() : det.outputs[0].name)
+                                         : cfg.v8_out;
+    auto vals = onx::run_onnx(det, x, {out});
+    dets = v8_detect(vals.at(out), cfg.nc, cfg.conf, cfg.nms, cfg.v8_fmt);
+    sx = (float)W / iw;
+    sy = (float)H / ih;
+  }
   if (all_out) *all_out = dets;
   std::vector<Box> out;
   for (const Det& d : dets) {
     if (d.cls != cfg.plate_class) continue;
-    Box b{d.x1 / scale, d.y1 / scale, d.x2 / scale, d.y2 / scale, d.score};
+    Box b{d.x1 * sx, d.y1 * sy, d.x2 * sx, d.y2 * sy, d.score};
     b.x1 = std::clamp(b.x1, 0.f, (float)W - 1); b.x2 = std::clamp(b.x2, 0.f, (float)W - 1);
     b.y1 = std::clamp(b.y1, 0.f, (float)H - 1); b.y2 = std::clamp(b.y2, 0.f, (float)H - 1);
     out.push_back(b);

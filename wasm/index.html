@@ -25,7 +25,7 @@
 
 <h1>yolo_lpr_cpp — ブラウザで日本のナンバープレートを読む</h1>
 <p class="sub">
-  検出（YOLOX-tiny 暫定／最終は YOLOv8）→ 位置別 9 head 分類。ONNX を fetch して WASM で推論、送信は一切なし。
+  検出（PlateYOLO-JP 暫定／最終は自前 YOLOv8）→ 位置別 9 head 分類。ONNX を fetch して WASM で推論、送信は一切なし。
   近接・手持ちのプレートは検出器が苦手なので、その場合は「枠を手で指定」を使ってください。
 </p>
 
@@ -39,8 +39,8 @@
   <button id="btn-box" disabled>枠を手で指定</button>
   <button id="btn-save" disabled>PNG 保存</button>
   <label><input type="checkbox" id="tta" checked> TTA（6クロップ合算）</label>
-  <label>検出しきい値 <input type="range" id="conf" min="0.05" max="0.60" step="0.05" value="0.15">
-    <span id="confv">0.15</span></label>
+  <label>検出しきい値 <input type="range" id="conf" min="0.05" max="0.60" step="0.05" value="0.30">
+    <span id="confv">0.30</span></label>
 </div>
 
 <div id="wrap">
@@ -59,8 +59,9 @@ const log = (s) => { $('log').textContent += "\n" + s; };
 let M = null, detReady = false, ocrReady = false, haveFrame = false;
 let manual = null, dragging = null;
 
-const MODELS = { det: '../models/plate_det_yolox.onnx', ocr: '../models/plate_ocr.onnx',
+const MODELS = { det: '../models/plate_det_pyj320.onnx', ocr: '../models/plate_ocr.onnx',
                  spec: '../spec/labels.txt' };
+const DET_KIND = 1;   // 1 = [1,4+nc,N] YOLO head (PlateYOLO-JP with the NMS tail stripped)
 
 function copyToHeap(bytes) {
   const p = M._malloc(bytes.length);
@@ -94,7 +95,7 @@ async function boot() {
   ocrReady = nodes > 0;
   log('認識モデル ok (' + nodes + ' nodes, ' + (ocr.length / 1048576).toFixed(2) + ' MB)');
 
-  log('検出モデルを読み込み中（約 20 MB、時間がかかります）…');
+  log('検出モデルを読み込み中（約 10 MB）…');
   try {
     const det = await fetchBytes(MODELS.det);
     const pd = copyToHeap(det);
@@ -161,7 +162,7 @@ function run(box) {
   const conf = +$('conf').value, tta = $('tta').checked ? 1 : 0;
   const t0 = performance.now();
   const n = M._jl_run(p, w, h, conf, tta, box ? box[0] : -1, box ? box[1] : -1,
-                      box ? box[2] : -1, box ? box[3] : -1);
+                      box ? box[2] : -1, box ? box[3] : -1, DET_KIND);
   const ms = performance.now() - t0;
   M._free(p);
   const res = JSON.parse(M.UTF8ToString(M._jl_result()));

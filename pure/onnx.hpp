@@ -170,13 +170,47 @@ inline std::string parse_valueinfo_name(RD r) {
   while (r.tag(f, wt)) { if (f == 1) name = r.bytes(); else r.skip(wt); }
   return name;
 }
+
+// Full ValueInfoProto: name + static dims (a dynamic dim, e.g. "batch_size", comes back as -1).
+// The pipeline reads the detector's input size from here instead of being told it.
+inline ValueInfo parse_valueinfo(RD r) {
+  ValueInfo vi; int f, wt;
+  while (r.tag(f, wt)) {
+    if (f == 1) vi.name = r.bytes();
+    else if (f == 2) {                                     // TypeProto
+      RD tp = r.sub(); int f2, w2;
+      while (tp.tag(f2, w2)) {
+        if (f2 == 1) {                                     // TypeProto.tensor_type
+          RD tt = tp.sub(); int f3, w3;
+          while (tt.tag(f3, w3)) {
+            if (f3 == 2) {                                 // TensorShapeProto
+              RD sh = tt.sub(); int f4, w4;
+              while (sh.tag(f4, w4)) {
+                if (f4 == 1) {                             // Dimension
+                  RD dm = sh.sub(); int f5, w5; int64_t v = -1;
+                  while (dm.tag(f5, w5)) {
+                    if (f5 == 1) v = (int64_t)dm.varint();  // dim_value
+                    else if (f5 == 2) { dm.bytes(); }       // dim_param -> dynamic
+                    else dm.skip(w5);
+                  }
+                  vi.dims.push_back(v);
+                } else sh.skip(w4);
+              }
+            } else tt.skip(w3);
+          }
+        } else tp.skip(w2);
+      }
+    } else r.skip(wt);
+  }
+  return vi;
+}
 inline void parse_graph(RD r, Graph& g) {
   int f, wt;
   while (r.tag(f, wt)) {
     if (f == 1) g.nodes.push_back(parse_node(r.sub()));
     else if (f == 5) parse_tensor(r.sub(), g);
-    else if (f == 11) g.inputs.push_back({parse_valueinfo_name(r.sub()), {}});
-    else if (f == 12) g.outputs.push_back({parse_valueinfo_name(r.sub()), {}});
+    else if (f == 11) g.inputs.push_back(parse_valueinfo(r.sub()));
+    else if (f == 12) g.outputs.push_back(parse_valueinfo(r.sub()));
     else r.skip(wt);
   }
 }

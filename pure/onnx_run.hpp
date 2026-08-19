@@ -15,6 +15,7 @@
 #include "face_ops.hpp"    // relu, conv2d_hw, gap, add_rowvec
 #include "linalg.hpp"      // matmul, transpose2d
 #include "bn.hpp"          // batchnorm2d
+#include "nd.hpp"          // rank-agnostic forward-only ops (transpose/softmax/matmul/broadcast)
 #include <map>
 #include <set>
 #include <string>
@@ -77,9 +78,17 @@ inline std::map<std::string, Tensor> run_onnx(const Graph& g, const Tensor& x,
     } else if (op == "Mul") {
       Tensor a = get(nd.input[0]), b = get(nd.input[1]);
       y = b->numel() == 1 ? mul_scalar(a, b->data[0])
-        : (a->numel() == 1 ? mul_scalar(b, a->data[0]) : mul(a, b));
+        : (a->numel() == 1 ? mul_scalar(b, a->data[0])
+        : (a->shape == b->shape ? mul(a, b) : ::nd::mul(a, b)));
     } else if (op == "Add") {
-      y = add(get(nd.input[0]), get(nd.input[1]));
+      Tensor a = get(nd.input[0]), b = get(nd.input[1]);
+      y = (a->shape == b->shape) ? add(a, b) : ::nd::add(a, b);
+    } else if (op == "Sub") {
+      y = ::nd::sub(get(nd.input[0]), get(nd.input[1]));
+    } else if (op == "Div") {
+      y = ::nd::div(get(nd.input[0]), get(nd.input[1]));
+    } else if (op == "Transpose") {
+      y = ::nd::transpose(get(nd.input[0]), attr_ints(nd, "perm"));
     } else if (op == "BatchNormalization") {
       Tensor gamma = get(nd.input[1]), beta = get(nd.input[2]);
       Tensor rm = get(nd.input[3]), rv = get(nd.input[4]);
@@ -95,7 +104,8 @@ inline std::map<std::string, Tensor> run_onnx(const Graph& g, const Tensor& x,
     } else if (op == "Concat") {
       std::vector<Tensor> xs;
       for (auto& s : nd.input) xs.push_back(get(s));
-      y = concat_ch(xs);
+      int64_t axis = attr_i0(nd, "axis", 1);
+      y = (axis == 1 && xs[0]->shape.size() == 4) ? concat_ch(xs) : ::nd::concat(xs, axis);
     } else if (op == "Slice") {
       auto* st = imap.at(nd.input[1]); auto* en = imap.at(nd.input[2]);
       const IntsTensor* ax = nd.input.size() > 3 ? imap.at(nd.input[3]) : nullptr;
@@ -104,23 +114,32 @@ inline std::map<std::string, Tensor> run_onnx(const Graph& g, const Tensor& x,
       if (ax && ax->data.size() == 2 && ax->data[0] == 2 && ax->data[1] == 3) {
         int64_t hstep = stp ? stp->data[0] : 1, wstep = stp ? stp->data[1] : 1;   // Focus
         y = slice_hw(xin, st->data[0], st->data[1], hstep, wstep);
-      } else {
+      } else if (xin->shape.size() == 4 && ax && ax->data.size() == 1 && ax->data[0] == 1) {
         int64_t c0 = st->data[0], c1 = en->data[0], C = xin->shape[1];
         if (c1 > C) c1 = C;
-        y = slice_ch(xin, c0, c1);
+        y = slice_ch(xin, c0, c1);                                // the verified 4D channel path
+      } else {
+        y = ::nd::slice(xin, st->data, en->data, ax ? ax->data : std::vector<int64_t>{},
+                        stp ? stp->data : std::vector<int64_t>{});
       }
     } else if (op == "Split") {
       Tensor xin = get(nd.input[0]);
+      int64_t axis = attr_i0(nd, "axis", 0);
       std::vector<int64_t> parts = attr_ints(nd, "split");
       if (parts.empty() && nd.input.size() > 1 && imap.count(nd.input[1])) parts = imap.at(nd.input[1])->data;
       if (parts.empty()) {                                        // equal split
-        int64_t k = (int64_t)nd.output.size(), C = xin->shape[1];
+        int64_t k = (int64_t)nd.output.size(), C = xin->shape[axis];
         for (int64_t i = 0; i < k; ++i) parts.push_back(C / k);
       }
-      int64_t off = 0;
-      for (size_t o = 0; o < nd.output.size(); ++o) {
-        vals[nd.output[o]] = slice_ch(xin, off, off + parts[o]);
-        off += parts[o];
+      if (axis == 1 && xin->shape.size() == 4) {
+        int64_t off = 0;
+        for (size_t o = 0; o < nd.output.size(); ++o) {
+          vals[nd.output[o]] = slice_ch(xin, off, off + parts[o]);
+          off += parts[o];
+        }
+      } else {
+        std::vector<Tensor> ps = ::nd::split(xin, axis, parts);
+        for (size_t o = 0; o < nd.output.size() && o < ps.size(); ++o) vals[nd.output[o]] = ps[o];
       }
       continue;                                                   // multi-output: already stored
     } else if (op == "GlobalAveragePool") {
@@ -145,9 +164,13 @@ inline std::map<std::string, Tensor> run_onnx(const Graph& g, const Tensor& x,
       Tensor prod = attr_i0(nd, "transB", 0) ? matmul(a, transpose2d(W)) : matmul(a, W);
       y = (nd.input.size() >= 3 && !nd.input[2].empty()) ? add_rowvec(prod, get(nd.input[2])) : prod;
     } else if (op == "MatMul") {
-      y = matmul(get(nd.input[0]), get(nd.input[1]));
+      Tensor a = get(nd.input[0]), b = get(nd.input[1]);
+      y = (a->shape.size() == 2 && b->shape.size() == 2) ? matmul(a, b) : ::nd::matmul(a, b);
     } else if (op == "Softmax") {
-      y = softmax_rows(get(nd.input[0]));                         // 2D rows (axis=1)
+      Tensor a = get(nd.input[0]);
+      int64_t axis = attr_i0(nd, "axis", a->shape.size() == 2 ? 1 : -1);
+      y = (a->shape.size() == 2 && (axis == 1 || axis == -1)) ? softmax_rows(a)   // verified path
+                                                             : ::nd::softmax(a, axis);
     } else if (op == "Identity") {
       y = get(nd.input[0]);
     } else {
