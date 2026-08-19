@@ -170,11 +170,19 @@ struct CornerCfg {
   int in_px = 64;
   float expand = 0.25f;          // how much context around the box the corner net sees
   float margin = 0.06f;          // border kept around the plate in the rectified crop
+  // Measured 2026-08-19: rectification is worth it when the box comes from a detector on a full
+  // scene (real close-up black plate: region confidence 0.42 -> 0.85) and it HURTS when the box is
+  // small or the image is already a tight plate crop (bus photo, 73 px box: 横浜 0.96 -> 佐賀 0.52;
+  // alpr_jp pre-cropped plates: 92.7% -> 83.3%). The corner net only ever saw plates with real
+  // surroundings, so a box with nothing around it is out of its distribution. Hence a size gate
+  // instead of a blanket "always rectify".
+  float min_box_px = 90.f;
 };
 
 // Predict the plate's 4 corners (image pixels, TL/TR/BR/BL) from a detector box.
 inline bool predict_corners(const onx::Graph& corner, const unsigned char* rgb, int W, int H,
                            const Box& b, const CornerCfg& cfg, float out[8]) {
+  if ((b.x2 - b.x1) < cfg.min_box_px) return false;      // too small: the box crop is better
   float win[4];
   std::vector<float> in = corner_input(rgb, W, H, b.x1, b.y1, b.x2, b.y2, cfg.expand, cfg.in_px, win);
   Tensor x = from_data({1, 3, cfg.in_px, cfg.in_px}, std::move(in));
