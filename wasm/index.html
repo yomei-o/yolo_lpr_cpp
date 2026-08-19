@@ -4,173 +4,161 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>yolo_lpr_cpp — ブラウザで日本のナンバープレートを読む</title>
 <style>
-  :root { color-scheme: light dark; --fg:#111; --bg:#fafafa; --line:#ccc; --accent:#c33; }
-  @media (prefers-color-scheme: dark) { :root { --fg:#eee; --bg:#181818; --line:#444; --accent:#f66; } }
+  :root { color-scheme: light dark; --fg:#111; --bg:#fafafa; --line:#ccc; --accent:#c33; --ok:#1a8; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#eee; --bg:#181818; --line:#444; --accent:#f66; --ok:#3db; } }
   body { font-family: system-ui, "Segoe UI", sans-serif; margin: 0 auto; padding: 16px; max-width: 1000px;
          color: var(--fg); background: var(--bg); }
   h1 { font-size: 1.2rem; margin: 0 0 4px; }
-  p.sub { margin: 0 0 16px; opacity: .75; font-size: .85rem; }
+  p.sub { margin: 0 0 14px; opacity: .8; font-size: .85rem; line-height: 1.55; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
-  button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 6px; background: transparent;
-           color: inherit; font: inherit; cursor: pointer; }
+  button, select { padding: 7px 12px; border: 1px solid var(--line); border-radius: 6px;
+                   background: transparent; color: inherit; font: inherit; cursor: pointer; }
   button:disabled { opacity: .45; cursor: default; }
   button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
-  #wrap { position: relative; display: inline-block; max-width: 100%; }
-  canvas, video { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; }
-  #plates { font-size: 1.5rem; font-weight: 600; margin: 10px 0 4px; min-height: 1.6em; }
+  button.live { border-color: var(--ok); color: var(--ok); font-weight: 600; }
+  #stage { position: relative; display: inline-block; max-width: 100%; }
+  video, canvas { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; }
+  #overlay { position: absolute; left: 0; top: 0; border: none; }
+  #plates { font-size: 1.5rem; font-weight: 600; margin: 10px 0 2px; min-height: 1.6em; }
+  #plates .settled { color: var(--ok); }
+  #status { font-size: .85rem; opacity: .8; min-height: 1.2em; }
   #log { white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; font-size: .78rem;
-         opacity: .8; border-top: 1px solid var(--line); padding-top: 8px; margin-top: 12px; }
+         opacity: .75; border-top: 1px solid var(--line); padding-top: 8px; margin-top: 12px;
+         max-height: 12em; overflow-y: auto; }
   label { font-size: .85rem; }
 </style>
 
 <h1>yolo_lpr_cpp — ブラウザで日本のナンバープレートを読む</h1>
 <p class="sub">
-  検出 → 位置別 11 head 分類。ONNX を fetch して WASM で推論、画像はどこにも送信されません。
-  <b>認識器は自前で学習したモデル</b>（実データ hold-out の地域名 97.9%）。検出器は上の選択で切り替えられます。
-  <b>暫定の検出器は「車ごと写った小さいプレート」しか取れません</b>（実測: プレートが画面幅の
-  5〜12% でスコア 0.7〜0.83、20% で 0.07、30% 以上は検出ゼロ）。つまり<b>車から数歩下がって撮る</b>のが正解で、
-  プレートに寄って撮った場合は「枠を手で指定」でドラッグしてください（認識器は近接でも読めます）。
+  検出 → 4隅補正 → 位置別 11 head 分類。ONNX を fetch して WASM で推論し、<b>画像はどこにも送信されません</b>。
+  <b>認識器は自前で学習したモデル</b>（実データ hold-out の地域名 97.9%）。<br>
+  「<b>自動スキャン</b>」を押すとカメラを見続け、プレートが現れたら自動で読みます。同じプレートを追跡している間は
+  フレームをまたいで確率を足し込むので、<b>見続けるほど読みが安定します</b>（確定すると緑）。
 </p>
 
 <div class="row">
   <button id="btn-cam">カメラを開く</button>
+  <button id="btn-live" class="live" disabled>自動スキャン開始</button>
   <input type="file" id="file" accept="image/*">
-  <button id="btn-shot" disabled>フレームを取り込む</button>
+</div>
+<div class="row">
+  <button id="btn-run" class="primary" disabled>いま見えているものを読む</button>
+  <button id="btn-box" disabled>枠を手で指定</button>
+  <button id="btn-save" disabled>PNG 保存</button>
 </div>
 <div class="row">
   <label>検出器
     <select id="detsel">
-      <option value="pyj">PlateYOLO-JP 320（借り物・実写に強い）</option>
-      <option value="v8n">自前 yolov8n 320（学習中・合成のみ）</option>
+      <option value="pyj">PlateYOLO-JP 320（借り物・車ごと写す用）</option>
+      <option value="v8n">自前 yolov8n 320（プレート単体・近接に強い）</option>
     </select>
   </label>
-</div>
-<div class="row">
-  <button id="btn-run" class="primary" disabled>読む（検出→認識）</button>
-  <button id="btn-box" disabled>枠を手で指定</button>
-  <button id="btn-save" disabled>PNG 保存</button>
-  <label><input type="checkbox" id="tta" checked> TTA（6クロップ合算）</label>
-  <label>検出しきい値 <input type="range" id="conf" min="0.05" max="0.60" step="0.05" value="0.30">
+  <label>しきい値 <input type="range" id="conf" min="0.05" max="0.60" step="0.05" value="0.30">
     <span id="confv">0.30</span></label>
 </div>
 
-<div id="wrap">
-  <video id="video" playsinline style="display:none"></video>
+<div id="stage">
+  <video id="video" playsinline muted style="display:none"></video>
   <canvas id="cv" width="640" height="480"></canvas>
+  <canvas id="overlay"></canvas>
 </div>
 
 <div id="plates"></div>
+<div id="status"></div>
 <div id="log">起動中…</div>
 
-<script src="jlpr.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const cv = $('cv'), ctx = cv.getContext('2d', { willReadFrequently: true });
-const log = (s) => { $('log').textContent += "\n" + s; };
-let M = null, detReady = false, ocrReady = false, haveFrame = false;
-let manual = null, dragging = null;
+const ov = $('overlay'), octx = ov.getContext('2d');
+const log = (s) => { const l = $('log'); l.textContent += "\n" + s; l.scrollTop = l.scrollHeight; };
 
-// Two detectors ship: the borrowed PlateYOLO-JP (YOLO12, NMS tail cut off -> xyxy) and our own
-// yolov8n trained on synthetic composites (plain Ultralytics export -> cxcywh). The box layout is
-// declared, never guessed: reading cxcywh as xyxy puts plausible boxes in the wrong place.
 const DETECTORS = {
-  pyj:  { path: '../models/plate_det_pyj320.onnx',  kind: 1,
-          label: 'PlateYOLO-JP 320（借り物・車ごと写す前提）' },
-  v8n:  { path: '../models/plate_det_v8n_320.onnx', kind: 2,
-          label: '自前 yolov8n 320（学習中・合成データのみ）' },
+  pyj: { path: '../models/plate_det_pyj320.onnx', kind: 1, label: 'PlateYOLO-JP 320（借り物）' },
+  v8n: { path: '../models/plate_det_v8n_320.onnx', kind: 2, label: '自前 yolov8n 320' },
 };
-const MODELS = { ocr: '../models/plate_ocr_v2.onnx', spec: '../spec/labels.txt',
-                 corner: '../models/plate_corner.onnx' };
-let DET_KIND = 1;
+const OCR = '../models/plate_ocr_v2.onnx';
+const CORNER = '../models/plate_corner.onnx';
+const SPEC = '../spec/labels.txt';
 
-function copyToHeap(bytes) {
-  const p = M._malloc(bytes.length);
-  M.HEAPU8.set(bytes, p);
-  return p;
+let worker = null, ready = false, busy = false;
+let live = false, haveFrame = false, detKind = 1;
+let dragging = null, lastFrameTime = 0, pendingBox = null;
+
+async function fetchMaybe(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return await r.arrayBuffer();
+  } catch (e) { return null; }
 }
 
-async function fetchBytes(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(url + ' -> HTTP ' + r.status);
-  return new Uint8Array(await r.arrayBuffer());
-}
-
+// The inference runs in a worker: a frame takes 0.3-1.5 s and doing that on the page's thread would
+// freeze the preview and the buttons between frames.
 async function boot() {
-  $('log').textContent = 'WASM を読み込み中…';
-  M = await createJlpr();
-  log('WASM ok');
-
-  const specText = await (await fetch(MODELS.spec)).text();
-  const n = M.lengthBytesUTF8(specText) + 1;
-  const sp = M._malloc(n);
-  M.stringToUTF8(specText, sp, n);
-  const groups = M._jl_load_spec(sp);
-  M._free(sp);
-  log('spec ok (' + groups + ' groups)');
-
-  const ocr = await fetchBytes(MODELS.ocr);
-  const po = copyToHeap(ocr);
-  const nodes = M._jl_load_ocr(po, ocr.length);
-  M._free(po);
-  ocrReady = nodes > 0;
-  log('認識モデル ok (' + nodes + ' nodes, ' + (ocr.length / 1048576).toFixed(2) + ' MB)');
-
-  // The corner regressor is optional: without it the reader falls back to the 6-margin sweep.
-  try {
-    const c = await fetchBytes(MODELS.corner);
-    const pc = copyToHeap(c);
-    const cn = M._jl_load_corner(pc, c.length);
-    M._free(pc);
-    if (cn > 0) log('4隅補正モデル ok (' + cn + ' nodes, ' + (c.length / 1024).toFixed(0)
-                    + ' KB) — 1 回の推論で読みます');
-  } catch (e) {
-    log('4隅補正モデルなし — 6 クロップ合算で読みます');
-  }
-  await loadDetector($('detsel').value);
+  ready = false;
   updateButtons();
+  const sel = DETECTORS[$('detsel').value];
+  detKind = sel.kind;
+  log('モデルを読み込み中: ' + sel.label + ' + 自前認識器');
+  const [ocr, det, corner, spec] = await Promise.all([
+    fetchMaybe(OCR), fetchMaybe(sel.path), fetchMaybe(CORNER), fetch(SPEC).then((r) => r.text()),
+  ]);
+  if (worker) worker.terminate();
+  worker = new Worker('worker.js');
+  worker.onmessage = onWorker;
+  worker.postMessage({ type: 'init', ocr: ocr, det: det, corner: corner, spec: spec },
+                     [ocr, det, corner].filter(Boolean));
 }
 
-async function loadDetector(key) {
-  const d = DETECTORS[key];
-  detReady = false;
-  updateButtons();
-  log('検出モデルを読み込み中: ' + d.label + ' …');
-  try {
-    const det = await fetchBytes(d.path);
-    const pd = copyToHeap(det);
-    const dn = M._jl_load_det(pd, det.length);
-    M._free(pd);
-    detReady = dn > 0;
-    DET_KIND = d.kind;
-    log('検出モデル ok (' + dn + ' nodes, ' + (det.length / 1048576).toFixed(2) + ' MB, '
-        + (d.kind === 2 ? 'cxcywh' : 'xyxy') + ')');
-  } catch (e) {
-    log('この検出モデルは読めませんでした (' + e.message + ') — 「枠を手で指定」なら認識できます');
+function onWorker(e) {
+  const m = e.data;
+  if (m.type === 'log') { log(m.text); return; }
+  if (m.type === 'error') { log('エラー: ' + m.text); busy = false; return; }
+  if (m.type === 'ready') {
+    ready = m.ocr > 0;
+    log('準備完了（spec ' + m.groups + ' groups、'
+        + (m.corner > 0 ? '4隅補正あり → 1 回の推論で読みます' : '4隅補正なし → 6 クロップ合算') + '）');
+    updateButtons();
+    return;
   }
-  updateButtons();
+  if (m.type === 'result') {
+    busy = false;
+    const res = JSON.parse(m.json);
+    if (m.track) drawTracks(res.tracks || [], m.ms);
+    else drawPlates(res.plates || [], m.ms);
+    if (live) requestAnimationFrame(pump);
+  }
 }
 
 function updateButtons() {
-  $('btn-run').disabled = !(haveFrame && ocrReady && detReady);
-  $('btn-box').disabled = !(haveFrame && ocrReady);
+  $('btn-run').disabled = !(ready && haveFrame);
+  $('btn-box').disabled = !(ready && haveFrame);
   $('btn-save').disabled = !haveFrame;
+  $('btn-live').disabled = !(ready && $('video').srcObject);
 }
 
-function drawImageToCanvas(img, w, h) {
-  cv.width = w; cv.height = h;
-  ctx.drawImage(img, 0, 0, w, h);
-  haveFrame = true; manual = null;
-  $('plates').textContent = '';
-  updateButtons();
+function sizeOverlay() {
+  ov.width = cv.width; ov.height = cv.height;
+  ov.style.width = cv.clientWidth + 'px';
+  ov.style.height = cv.clientHeight + 'px';
 }
 
+// ---- frame sources -------------------------------------------------------------------------
 $('file').addEventListener('change', (e) => {
   const f = e.target.files[0];
   if (!f) return;
+  stopLive();
   const img = new Image();
   img.onload = () => {
     const max = 1280, s = Math.min(1, max / Math.max(img.width, img.height));
-    drawImageToCanvas(img, Math.round(img.width * s), Math.round(img.height * s));
+    cv.width = Math.round(img.width * s); cv.height = Math.round(img.height * s);
+    cv.style.display = 'block'; $('video').style.display = 'none';
+    ctx.drawImage(img, 0, 0, cv.width, cv.height);
+    sizeOverlay();
+    octx.clearRect(0, 0, ov.width, ov.height);
+    haveFrame = true;
+    updateButtons();
     log('画像 ' + cv.width + 'x' + cv.height);
   };
   img.src = URL.createObjectURL(f);
@@ -178,63 +166,115 @@ $('file').addEventListener('change', (e) => {
 
 $('btn-cam').addEventListener('click', async () => {
   try {
-    const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment',
-                                                                   width: { ideal: 1280 } } });
+    const st = await navigator.mediaDevices.getUserMedia(
+      { video: { facingMode: 'environment', width: { ideal: 1280 } } });
     const v = $('video');
-    v.srcObject = st; v.style.display = 'block'; cv.style.display = 'none';
+    v.srcObject = st;
+    v.style.display = 'block'; cv.style.display = 'none';
     await v.play();
-    $('btn-shot').disabled = false;
-    log('カメラ ok ' + v.videoWidth + 'x' + v.videoHeight);
+    cv.width = v.videoWidth; cv.height = v.videoHeight;
+    sizeOverlay();
+    haveFrame = true;
+    updateButtons();
+    log('カメラ ok ' + v.videoWidth + 'x' + v.videoHeight
+        + ' — 「自動スキャン開始」でプレートを探し続けます');
   } catch (e) { log('カメラを開けません: ' + e.message); }
 });
 
-$('btn-shot').addEventListener('click', () => {
+function grabFrame() {
   const v = $('video');
-  drawImageToCanvas(v, v.videoWidth, v.videoHeight);
-  v.style.display = 'none'; cv.style.display = 'block';
-});
-
-$('conf').addEventListener('input', () => { $('confv').textContent = (+$('conf').value).toFixed(2); });
-$('detsel').addEventListener('change', (e) => { if (M) loadDetector(e.target.value); });
-
-function run(box) {
-  const w = cv.width, h = cv.height;
-  const frame = ctx.getImageData(0, 0, w, h);
-  const p = copyToHeap(frame.data);
-  const conf = +$('conf').value, tta = $('tta').checked ? 1 : 0;
-  const t0 = performance.now();
-  const n = M._jl_run(p, w, h, conf, tta, box ? box[0] : -1, box ? box[1] : -1,
-                      box ? box[2] : -1, box ? box[3] : -1, DET_KIND);
-  const ms = performance.now() - t0;
-  M._free(p);
-  const res = JSON.parse(M.UTF8ToString(M._jl_result()));
-  if (n < 0 || res.error) { log('エラー: ' + (res.error || n)); return; }
-  log((box ? '手動枠' : '検出') + ' ' + n + ' 件 / ' + (ms / 1000).toFixed(2) + ' 秒');
-  ctx.lineWidth = Math.max(2, Math.round(w / 320));
-  ctx.strokeStyle = '#e33';
-  ctx.font = Math.max(14, Math.round(w / 32)) + 'px system-ui, sans-serif';
-  const lines = [];
-  for (const pl of res.plates) {
-    const [x1, y1, x2, y2] = pl.box;
-    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-    ctx.fillStyle = 'rgba(0,0,0,.6)';
-    const tw = ctx.measureText(pl.text).width + 8;
-    ctx.fillRect(x1, Math.max(0, y1 - 26), tw, 24);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(pl.text, x1 + 4, Math.max(18, y1 - 8));
-    lines.push(pl.text + '　(検出 ' + pl.det.toFixed(2) + ' / 地域名 ' + pl.conf[0].toFixed(2) + ')');
+  if (v.srcObject && v.videoWidth) {
+    if (cv.width !== v.videoWidth) { cv.width = v.videoWidth; cv.height = v.videoHeight; sizeOverlay(); }
+    ctx.drawImage(v, 0, 0, cv.width, cv.height);
   }
-  $('plates').textContent = lines.join('　／　') || '（プレートなし）';
+  return ctx.getImageData(0, 0, cv.width, cv.height);
 }
 
-$('btn-run').addEventListener('click', () => run(null));
+// ---- inference -----------------------------------------------------------------------------
+function send(track, box) {
+  if (!ready || busy) return;
+  const frame = grabFrame();
+  const buf = frame.data.buffer;
+  busy = true;
+  worker.postMessage({ type: 'frame', pixels: buf, w: cv.width, h: cv.height,
+                       conf: +$('conf').value, tta: !track, detKind: detKind,
+                       track: track, box: box || null }, [buf]);
+}
 
+function pump() {
+  if (!live) return;
+  const now = performance.now();
+  if (now - lastFrameTime < 60) { requestAnimationFrame(pump); return; }   // let the preview breathe
+  lastFrameTime = now;
+  send(true);
+}
+
+$('btn-live').addEventListener('click', () => { live ? stopLive() : startLive(); });
+
+function startLive() {
+  live = true;
+  worker.postMessage({ type: 'reset' });
+  $('btn-live').textContent = '自動スキャン停止';
+  $('status').textContent = 'スキャン中…';
+  requestAnimationFrame(pump);
+}
+function stopLive() {
+  if (!live) return;
+  live = false;
+  $('btn-live').textContent = '自動スキャン開始';
+}
+
+$('btn-run').addEventListener('click', () => { stopLive(); send(false); });
+$('conf').addEventListener('input', () => { $('confv').textContent = (+$('conf').value).toFixed(2); });
+$('detsel').addEventListener('change', () => { stopLive(); boot(); });
+
+// ---- drawing -------------------------------------------------------------------------------
+function box(x1, y1, x2, y2, colour, label, sub) {
+  octx.lineWidth = Math.max(2, Math.round(ov.width / 320));
+  octx.strokeStyle = colour;
+  octx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+  const fs = Math.max(14, Math.round(ov.width / 34));
+  octx.font = fs + 'px system-ui, sans-serif';
+  const text = label + (sub ? '  ' + sub : '');
+  const w = octx.measureText(text).width + 10;
+  octx.fillStyle = 'rgba(0,0,0,.65)';
+  octx.fillRect(x1, Math.max(0, y1 - fs - 8), w, fs + 8);
+  octx.fillStyle = colour;
+  octx.fillText(text, x1 + 5, Math.max(fs, y1 - 6));
+}
+
+function drawPlates(plates, ms) {
+  octx.clearRect(0, 0, ov.width, ov.height);
+  const lines = [];
+  for (const p of plates) {
+    box(p.box[0], p.box[1], p.box[2], p.box[3], '#e33', p.text, '(' + p.det.toFixed(2) + ')');
+    lines.push(p.text + '　(検出 ' + p.det.toFixed(2) + ' / 地域名 ' + p.conf[0].toFixed(2) + ')');
+  }
+  $('plates').textContent = lines.join('　／　') || '（プレートなし）';
+  $('status').textContent = (ms / 1000).toFixed(2) + ' 秒 / フレーム';
+}
+
+function drawTracks(tracks, ms) {
+  octx.clearRect(0, 0, ov.width, ov.height);
+  const parts = [];
+  for (const t of tracks) {
+    const colour = t.settled ? '#1a8' : '#e33';
+    box(t.box[0], t.box[1], t.box[2], t.box[3], colour, t.text,
+        t.frames + 'f' + (t.settled ? ' 確定' : ''));
+    parts.push('<span class="' + (t.settled ? 'settled' : '') + '">' + t.text + '</span>'
+               + ' <small>' + t.frames + ' フレーム / 地域名 ' + (t.conf[0] || 0).toFixed(2) + '</small>');
+  }
+  $('plates').innerHTML = parts.join('　／　') || '<small>プレートを探しています…</small>';
+  $('status').textContent = (ms / 1000).toFixed(2) + ' 秒 / フレーム（' + tracks.length + ' 件追跡中）';
+}
+
+// ---- manual box ----------------------------------------------------------------------------
 $('btn-box').addEventListener('click', () => {
+  stopLive();
   log('画像の上でプレートを囲むようにドラッグしてください');
   dragging = { active: false };
   cv.style.cursor = 'crosshair';
 });
-
 function canvasPos(ev) {
   const r = cv.getBoundingClientRect();
   return [(ev.clientX - r.left) * cv.width / r.width, (ev.clientY - r.top) * cv.height / r.height];
@@ -242,32 +282,40 @@ function canvasPos(ev) {
 cv.addEventListener('pointerdown', (ev) => {
   if (!dragging) return;
   const [x, y] = canvasPos(ev);
-  dragging = { active: true, x0: x, y0: y, snap: ctx.getImageData(0, 0, cv.width, cv.height) };
+  dragging = { active: true, x0: x, y0: y };
 });
 cv.addEventListener('pointermove', (ev) => {
   if (!dragging || !dragging.active) return;
   const [x, y] = canvasPos(ev);
-  ctx.putImageData(dragging.snap, 0, 0);
-  ctx.strokeStyle = '#3af'; ctx.lineWidth = 2;
-  ctx.strokeRect(dragging.x0, dragging.y0, x - dragging.x0, y - dragging.y0);
+  octx.clearRect(0, 0, ov.width, ov.height);
+  octx.strokeStyle = '#3af';
+  octx.lineWidth = 2;
+  octx.strokeRect(dragging.x0, dragging.y0, x - dragging.x0, y - dragging.y0);
 });
 cv.addEventListener('pointerup', (ev) => {
   if (!dragging || !dragging.active) return;
   const [x, y] = canvasPos(ev);
-  ctx.putImageData(dragging.snap, 0, 0);
-  const box = [Math.min(dragging.x0, x), Math.min(dragging.y0, y),
-               Math.max(dragging.x0, x), Math.max(dragging.y0, y)];
-  dragging = null; cv.style.cursor = 'default';
-  if (box[2] - box[0] > 8 && box[3] - box[1] > 8) run(box);
+  const b = [Math.min(dragging.x0, x), Math.min(dragging.y0, y),
+             Math.max(dragging.x0, x), Math.max(dragging.y0, y)];
+  dragging = null;
+  cv.style.cursor = 'default';
+  octx.clearRect(0, 0, ov.width, ov.height);
+  if (b[2] - b[0] > 8 && b[3] - b[1] > 8) send(false, b);
 });
 
 $('btn-save').addEventListener('click', () => {
+  const out = document.createElement('canvas');
+  out.width = cv.width; out.height = cv.height;
+  const c = out.getContext('2d');
+  c.drawImage(cv, 0, 0);
+  c.drawImage(ov, 0, 0);
   const a = document.createElement('a');
-  a.href = cv.toDataURL('image/png');
+  a.href = out.toDataURL('image/png');
   a.download = 'jlpr.png';
   a.click();
 });
 
+window.addEventListener('resize', sizeOverlay);
 boot().catch((e) => log('起動に失敗: ' + e.message));
 </script>
 </html>

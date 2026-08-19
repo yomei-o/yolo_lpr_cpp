@@ -106,6 +106,7 @@ struct Read {
   std::vector<float> conf;            // winning share of the summed probability, 0..1
   int crops = 0;
   spec::Plate plate;
+  std::vector<std::vector<float>> probs;   // per-head probabilities, for the frame-to-frame tracker
 };
 
 // Graph outputs in declaration order = head order (region, class_num_01..03, hiragana,
@@ -145,6 +146,9 @@ inline Read read_plate(const onx::Graph& ocr, const spec::Spec& sp, const unsign
     for (size_t i = 0; i < sum[h].size(); ++i) { tot += sum[h][i]; if (sum[h][i] > bv) { bv = sum[h][i]; best = (int)i; } }
     r.arg.push_back(best);
     r.conf.push_back(tot > 0 ? (float)(bv / tot) : 0.f);
+    std::vector<float> pv(sum[h].size());
+    for (size_t i = 0; i < sum[h].size(); ++i) pv[i] = (float)(tot > 0 ? sum[h][i] / tot : 0.0);
+    r.probs.push_back(std::move(pv));      // normalised, so frames contribute equally to a track
   }
   r.plate = spec::decode(sp, r.arg);
   return r;
@@ -203,6 +207,9 @@ inline Read read_plate_warped(const onx::Graph& ocr, const spec::Spec& sp, const
     for (size_t i = 0; i < p.size(); ++i) { tot += p[i]; if (p[i] > p[best]) best = (int)i; }
     r.arg.push_back(best);
     r.conf.push_back(tot > 0 ? (float)(p[best] / tot) : 0.f);
+    std::vector<float> pv(p.size());
+    for (size_t i = 0; i < p.size(); ++i) pv[i] = (float)(tot > 0 ? p[i] / tot : 0.0);
+    r.probs.push_back(std::move(pv));
   }
   r.plate = spec::decode(sp, r.arg);
   return r;
