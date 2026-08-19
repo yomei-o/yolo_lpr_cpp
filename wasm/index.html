@@ -79,7 +79,8 @@ const DETECTORS = {
   v8n:  { path: '../models/plate_det_v8n_320.onnx', kind: 2,
           label: '自前 yolov8n 320（学習中・合成データのみ）' },
 };
-const MODELS = { ocr: '../models/plate_ocr_v2.onnx', spec: '../spec/labels.txt' };
+const MODELS = { ocr: '../models/plate_ocr_v2.onnx', spec: '../spec/labels.txt',
+                 corner: '../models/plate_corner.onnx' };
 let DET_KIND = 1;
 
 function copyToHeap(bytes) {
@@ -114,6 +115,17 @@ async function boot() {
   ocrReady = nodes > 0;
   log('認識モデル ok (' + nodes + ' nodes, ' + (ocr.length / 1048576).toFixed(2) + ' MB)');
 
+  // The corner regressor is optional: without it the reader falls back to the 6-margin sweep.
+  try {
+    const c = await fetchBytes(MODELS.corner);
+    const pc = copyToHeap(c);
+    const cn = M._jl_load_corner(pc, c.length);
+    M._free(pc);
+    if (cn > 0) log('4隅補正モデル ok (' + cn + ' nodes, ' + (c.length / 1024).toFixed(0)
+                    + ' KB) — 1 回の推論で読みます');
+  } catch (e) {
+    log('4隅補正モデルなし — 6 クロップ合算で読みます');
+  }
   await loadDetector($('detsel').value);
   updateButtons();
 }
