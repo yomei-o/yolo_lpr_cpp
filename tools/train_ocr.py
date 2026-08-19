@@ -200,13 +200,17 @@ def multihead_loss(out, order, y, m):
     return loss
 
 
+EVAL_MARGIN = 0.03      # fixed: the metric has to be a property of the model, not of the augmentation
+
+
 @torch.no_grad()
 def eval_region(model, ds, order, idxs, device, limit=0):
+    """Clean, fixed-margin evaluation. Passing the training augmentation through here made the
+    *baseline* look 8 points worse (84.0% instead of 91.7%) and every comparison noisy."""
     model.eval()
     n = ok = 0
-    rng = Rng(5)
     for i in (idxs[:limit] if limit else idxs):
-        x, heads, _ = ds.get(i, rng)
+        x, heads, _ = ds.load(i, (EVAL_MARGIN, 1.0, 1.0) if isinstance(ds, AlprSet) else EVAL_MARGIN)
         out = model(torch.from_numpy(x[None]).float().to(device))
         pred = int(out["region"].argmax(1).item())
         ok += int(pred == heads[0])
@@ -218,11 +222,10 @@ def eval_region(model, ds, order, idxs, device, limit=0):
 @torch.no_grad()
 def eval_synth(model, ds, order, device, limit=200):
     model.eval()
-    rng = Rng(6)
     per = [0] * len(order)
     full = n = 0
     for i in range(min(limit, len(ds))):
-        x, heads, _ = ds.get(i, rng)
+        x, heads, _ = ds.load(i, EVAL_MARGIN)
         out = model(torch.from_numpy(x[None]).float().to(device))
         allok = True
         for h, name in enumerate(order):
