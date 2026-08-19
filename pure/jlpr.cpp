@@ -68,12 +68,23 @@ static std::string escape_line(const std::string& s) {
   return o;
 }
 
+// mkdir -p: create every missing component. Creating only the leaf silently fails the first time a
+// generator is pointed at data/synth on a fresh checkout, and the error looks like a permissions
+// problem instead of a missing parent.
 static void make_dir(const std::string& d) {
+  std::string acc;
+  for (size_t i = 0; i <= d.size(); ++i) {
+    if (i == d.size() || d[i] == '/' || d[i] == '\') {
+      if (!acc.empty() && acc != "." && acc != "..") {
 #ifdef _WIN32
-  _mkdir(d.c_str());
+        _mkdir(acc.c_str());
 #else
-  mkdir(d.c_str(), 0755);
+        mkdir(acc.c_str(), 0755);
 #endif
+      }
+    }
+    if (i < d.size()) acc += d[i];
+  }
 }
 
 static int cmd_gen(int argc, char** argv) {
