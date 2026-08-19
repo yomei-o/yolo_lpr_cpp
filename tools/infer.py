@@ -27,6 +27,11 @@ DET_NC = 8
 PLATE_CLASS = 7
 MARGINS = [-0.06, -0.03, 0.0, 0.03, 0.06, 0.10]
 
+# stage 2 (M6): the corner regressor's framing, mirroring pure/warp.hpp + tools/corner_model.py
+CORNER_IN_PX = 64
+CORNER_EXPAND = 0.25
+WARP_MARGIN = 0.06
+
 
 def load_rgb(path):
     """Decode to an HxWx3 uint8 array. Uses the same pixels the CLI sees for .rgba fixtures."""
@@ -81,6 +86,46 @@ def crop_to_input(rgb, bx0, by0, bx1, by1, margin):
     return np.ascontiguousarray(v.transpose(2, 0, 1)[None])
 
 
+def solve_h_dst_to_src(dst, src):
+    """Homography mapping destination -> source, from 4 point pairs (same as pure/warp.hpp)."""
+    A, b = [], []
+    for (dx, dy), (sx, sy) in zip(dst, src):
+        A.append([dx, dy, 1, 0, 0, 0, -dx * sx, -dy * sx])
+        b.append(sx)
+        A.append([0, 0, 0, dx, dy, 1, -dx * sy, -dy * sy])
+        b.append(sy)
+    h = np.linalg.solve(np.array(A, dtype=np.float64), np.array(b, dtype=np.float64))
+    return np.array([[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1.0]])
+
+
+def warp_to_input(rgb, corners, margin=WARP_MARGIN, out_px=128):
+    """Rectify the plate quad (TL,TR,BR,BL in image pixels) into out_px x out_px RGB /255 NCHW."""
+    lo = margin / (1.0 + 2 * margin) * out_px
+    hi = (1.0 + margin) / (1.0 + 2 * margin) * out_px
+    dst = [(lo, lo), (hi, lo), (hi, hi), (lo, hi)]
+    src = [(corners[0], corners[1]), (corners[2], corners[3]),
+           (corners[4], corners[5]), (corners[6], corners[7])]
+    H = solve_h_dst_to_src(dst, src)
+    g = np.arange(out_px, dtype=np.float64) + 0.5
+    xx, yy = np.meshgrid(g, g)
+    w = H[2, 0] * xx + H[2, 1] * yy + H[2, 2]
+    u = (H[0, 0] * xx + H[0, 1] * yy + H[0, 2]) / w - 0.5
+    v = (H[1, 0] * xx + H[1, 1] * yy + H[1, 2]) / w - 0.5
+    out = _sample(rgb, u.astype(np.float32), v.astype(np.float32)) / np.float32(255.0)
+    return np.ascontiguousarray(out.transpose(2, 0, 1)[None])
+
+
+def corner_input(rgb, box, expand=CORNER_EXPAND, in_px=CORNER_IN_PX):
+    bw, bh = box[2] - box[0], box[3] - box[1]
+    cx0, cy0 = box[0] - bw * expand, box[1] - bh * expand
+    cx1, cy1 = box[2] + bw * expand, box[3] + bh * expand
+    g = np.arange(in_px, dtype=np.float32) + 0.5
+    sx = cx0 + g * (cx1 - cx0) / in_px - 0.5
+    sy = cy0 + g * (cy1 - cy0) / in_px - 0.5
+    v = _sample(rgb, sx[None, :].repeat(in_px, 0), sy[:, None].repeat(in_px, 1)) / np.float32(255.0)
+    return np.ascontiguousarray(v.transpose(2, 0, 1)[None]), (cx0, cy0, cx1, cy1)
+
+
 # ---- onnxruntime sessions --------------------------------------------------------------------
 def _session(path, extra_outputs=()):
     import onnxruntime as ort
@@ -111,8 +156,10 @@ class Pipeline:
                      detection data (M7), not the shipped detector.
     """
 
-    def __init__(self, det_path=None, ocr_path=None, spec_path=None, det_kind="yolox", v8_fmt="xyxy"):
+    def __init__(self, det_path=None, ocr_path=None, spec_path=None, det_kind="yolox", v8_fmt="xyxy",
+                 corner_path=None):
         self.spec = L.load(spec_path or os.path.join(ROOT, "spec", "labels.txt"))
+        self.corner = _session(corner_path) if corner_path else None
         self.det_kind = det_kind
         self.v8_fmt = v8_fmt
         self.det = _session(det_path, DET_HEADS if det_kind == "yolox" else ()) if det_path else None
@@ -243,6 +290,27 @@ class Pipeline:
         boxes.sort(key=lambda b: -b[4])
         return boxes
 
+    # -- stage 2: corners -> rectified crop ---------------------------------------------------
+    def predict_corners(self, rgb, box):
+        x, win = corner_input(rgb, box)
+        out = self.corner.run(None, {self.corner.get_inputs()[0].name: x})[0].reshape(-1)
+        if out.size < 8:
+            return None
+        c = []
+        for i in range(4):
+            c.append(float(win[0] + out[2 * i] * (win[2] - win[0])))
+            c.append(float(win[1] + out[2 * i + 1] * (win[3] - win[1])))
+        return c
+
+    def read_warped(self, rgb, corners):
+        """One forward pass on the rectified crop — no TTA, because the framing is now fixed."""
+        x = warp_to_input(rgb, corners)
+        outs = self.ocr.run(self.ocr_heads, {self.ocr.get_inputs()[0].name: x})
+        outs = [o.reshape(-1).astype(np.float64) for o in outs]
+        arg = [int(np.argmax(t)) for t in outs]
+        conf = [float(t[a] / t.sum()) if t.sum() > 0 else 0.0 for t, a in zip(outs, arg)]
+        return arg, conf, 1
+
     # -- stage 3 ------------------------------------------------------------------------------
     def read(self, rgb, box, margins=MARGINS):
         inp = self.ocr.get_inputs()[0].name
@@ -269,7 +337,11 @@ class Pipeline:
         margins = MARGINS if tta else [0.0]
         plates = []
         for b in boxes:
-            arg, cf, crops = self.read(rgb, b, margins)
+            if self.corner is not None:
+                corners = self.predict_corners(rgb, b)
+                arg, cf, crops = self.read_warped(rgb, corners) if corners else self.read(rgb, b, margins)
+            else:
+                arg, cf, crops = self.read(rgb, b, margins)
             p = L.decode(self.spec, arg)
             plates.append({"box": [round(v, 1) for v in b[:4]], "det": round(b[4], 3),
                            "crops": crops, "text": p.text, "region": p.region, "cls": p.cls,
@@ -295,12 +367,13 @@ def main(argv):
     ap.add_argument("--imgsz", type=int, default=416)
     ap.add_argument("--single", action="store_true")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--corner", default="", help="corner regressor ONNX (M6); enables rectification")
     ap.add_argument("--box", nargs=4, type=float, default=None)
     ap.add_argument("--det-kind", dest="det_kind", default="v8", choices=["yolox", "v8", "plateyolo"])
     a = ap.parse_args(argv)
 
     rgb = load_rgb(a.img)
-    pipe = Pipeline(a.det, a.ocr, a.spec, a.det_kind)
+    pipe = Pipeline(a.det, a.ocr, a.spec, a.det_kind, corner_path=(a.corner or None))
     res = pipe.run(rgb, a.imgsz, a.conf, not a.single, a.box)
 
     if a.json:
