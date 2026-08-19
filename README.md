@@ -42,8 +42,8 @@ python -m http.server 8000     # リポジトリのルートから → http://lo
 node wasm/test_node.js         # ヘッドレスの回帰テスト（CLI と同じ画素で同じ文字列を assert）
 ```
 
-実測（実写 960×640、CPU 1 スレッド）: CLI **2.4 秒** / WASM(node, SIMD) **4.5 秒** で
-`横浜 200 か 3591`。内訳は検出 320px と 6 クロップ分の認識。
+実測（実写 960×640、CPU 1 スレッド）: CLI **2.2 秒** / WASM(node, SIMD) **1.9 秒** で
+`横浜 200 か 3591`（地域名の信頼度 0.96）。内訳は検出 320px と 6 クロップ分の認識。
 
 **まだ暫定なところ**: 検出器は [PlateYOLO-JP](https://github.com/Kazuhito00/PlateYOLO-JP-Prototype)
 （YOLO12・AGPL-3.0）の NMS を剥がしたものを借りている（`tools/strip_nms.py`）。自前 yolov8n nc=1 に
@@ -95,7 +95,9 @@ box が良くなるだけで地域名の信頼度が 0.57 → 0.92 に動く。*
 |---|---|---|---|
 | ラベル表（地名138/かな/分類番号/種別） | `labels.py` ✅ | `spec.hpp` ✅ | 唯一の定義 `spec/labels.txt` を**両方が実行時にパース**（生成物ではなく同じ入力）。dump と埋め込みヘッダがバイト一致 |
 | 合成データ生成 | `gen.py` | `gen.cpp` | 同じ seed で**文字列・4隅・変換パラメータ・色・種別が完全一致**。画像はラスタライザ差（PIL/FreeType vs stb_truetype）が出るので、一致は幾何とラベルまでとし、画像は統計と目視で同等を確認 |
-| 学習（検出 / 4隅 / 認識） | PyTorch (+Ultralytics) | 自作 autograd（`yolov8_cpp`/`lpr_cpp` 由来） | 同じ初期重み・同じバッチ・同じ LR で **loss と勾配が 1e-4 以内**。小データ・数ステップで縛る |
+| 学習（認識器） | `train_ocr.py`（PyTorch 移植、ONNX 重み読み込み） ✅ | `jlpr train`（**ONNX グラフを直接学習**） ✅ | 同じ ONNX・同じ seed・同じ batch で **step1 の loss 差 1e-6**、以降は相対 1% 以内（実測、`tools/parity/train.py`） |
+| 学習（検出器） | `train_det.py`（Ultralytics） ✅ | yolov8_cpp の v8 loss / TAL 移植が必要（M7b） | 同上の方式で比較する予定 |
+| 学習（4隅） | M6 | M6 | — |
 | 推論 | `infer.py`（onnxruntime） ✅ | 自前 ONNX ランナ ✅ | 同一画像で**同一文字列・同一 argmax**、box 差 0.10px / det 差 0.0000（実測）。自作側の float 加算誤差は認識器 3.3e-05・検出器 3e-03 なので、閾値ぎりぎりの box は割れる |
 | 評価（mAP / 全文一致 / 色別内訳） | `eval.py` | `jlpr val` | 同じデータセットで**同じ数値**（mAP は 1e-3 以内） |
 | ONNX 出力 | `torch.onnx.export` | 自前エクスポータ | 出力 ONNX を相互に読み込んで **forward が 1e-5 以内** |
@@ -122,6 +124,22 @@ Python/CUDA が現実的で、C++ 側は**同じ結果に到達できること�
 - 出力: 4隅の (x,y) × 4 = 8 値（crop 正規化座標）。損失は Wing / smooth-L1
 - 学習: 合成データが主（4隅は生成時に既知）。実データは正面向きを弱ラベルとして併用
 - 想定サイズ 0.2–0.5 MB。ここで得た4隅で 128×128 に warp（マージンは実験で決めて記録する）
+
+### 学習の実測（M5、2026-08-19）
+
+出発点は出荷済みの重み（`models/plate_ocr.onnx`）。実データ 720 枚を 576 train / 144 hold-out に
+分けて（両言語で同じ分割）、合成データと混ぜて 600 step 学習した結果:
+
+| | 実データ hold-out region top1 |
+|---|---|
+| 出荷済みの重み | 91.7% |
+| **600 step 学習後（`plate_ocr_v2.onnx`）** | **95.1%** |
+
+学習前に見つけて直したこと（数字が出たので分かった）:
+- **region を 133→138 に広げるとき、新クラスの bias が 0 だと既存クラスに勝ってしまう**
+  （logit 0 は負の logit に勝つ）。学習前から 91.7% → 85.4% に落ちていた。bias を −10 で初期化して解決。
+- **合成データで region head を学習させると実データ精度が落ちる**（78% → 67%）。合成サンプルは region をマスク。
+- **BN 統計を凍結**し、backbone は lr×0.1。合成が多いバッチで BN 統計が動くと実データ精度が下がる。
 
 ### [3] 認識器 — depthwise-separable ResNet 128ch（`lpr_cpp` の構造を継承）
 既存 ONNX（実データ学習済み）の重みを初期値にする。構造は `lpr_cpp/pure/ref/ARCH.md` の通り:
@@ -173,7 +191,8 @@ head 追加は分岐の GAP 出力に Dense を足すだけなので、既存 ba
 
 | 認識器 | region top1（1クロップ） | region top1（6クロップTTA） | top3(TTA) |
 |---|---|---|---|
-| 自前 `plate_ocr`（`lpr_cpp` 由来・128ch dwsep-ResNet, 1.3MB） | **89.2%** | **92.5%** | 96.1% |
+| 自前 `plate_ocr`（`lpr_cpp` 由来・128ch dwsep-ResNet, 1.3MB） | 89.2% | 92.5% | 96.1% |
+| **`plate_ocr_v2`（M5 で学習したもの・現行の既定）** | **95.6%** | — | 98.6% |
 | EkMixer（PlateYOLO-JP 同梱・1.0MB） | 76.1% | 81.2% | 88.2% |
 
 → **自前を base に微調整する**方針で確定（M5）。EkMixer は捨てずに疑似ラベルの第二意見として使う

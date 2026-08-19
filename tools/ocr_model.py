@@ -124,7 +124,16 @@ def load_onnx_weights(model, onnx_path, verbose=True):
         elif n.op_type == "BatchNormalization":
             bns.append(tuple(init[n.input[i]] for i in (1, 2, 3, 4)))
         elif n.op_type == "Gemm":
-            gemms.append([init[n.input[1]], init[n.input[2]], n.output[0]])
+            # transB tells us how the weight is stored: our own exporter writes [in,out] (transB=0),
+            # torch.onnx.export writes [out,in] (transB=1). Normalise to [in,out] here.
+            trans_b = 0
+            for at in n.attribute:
+                if at.name == "transB":
+                    trans_b = at.i
+            W = init[n.input[1]]
+            if trans_b:
+                W = W.T
+            gemms.append([W, init[n.input[2]], n.output[0]])
     # the head's public name is on the Softmax that consumes the Gemm, not on the Gemm itself
     soft = {n.input[0]: n.output[0] for n in g.node if n.op_type == "Softmax"}
     for e in gemms:

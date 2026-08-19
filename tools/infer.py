@@ -111,9 +111,10 @@ class Pipeline:
                      detection data (M7), not the shipped detector.
     """
 
-    def __init__(self, det_path=None, ocr_path=None, spec_path=None, det_kind="yolox"):
+    def __init__(self, det_path=None, ocr_path=None, spec_path=None, det_kind="yolox", v8_fmt="xyxy"):
         self.spec = L.load(spec_path or os.path.join(ROOT, "spec", "labels.txt"))
         self.det_kind = det_kind
+        self.v8_fmt = v8_fmt
         self.det = _session(det_path, DET_HEADS if det_kind == "yolox" else ()) if det_path else None
         self.ocr = _session(ocr_path) if ocr_path else None
         self.ocr_heads = [o.name for o in self.ocr.get_outputs()] if self.ocr else []
@@ -138,10 +139,11 @@ class Pipeline:
         boxes.sort(key=lambda b: -b[4])
         return boxes
 
-    def detect_v8(self, rgb, conf=0.25, nms=0.45, plate_class=0):
+    def detect_v8(self, rgb, conf=0.25, nms=0.45, plate_class=0, fmt="xyxy"):
         """A [1,4+nc,N] head with the NMS tail stripped (tools/strip_nms.py) — the shape our own
-        detector will have after M7. Boxes are xyxy in input pixels, scores already sigmoided;
-        mirrors pure/infer_v8.hpp so the two implementations can be diffed."""
+        detector will have after M7. Scores are already sigmoided; the 4 box numbers are in input
+        pixels and their layout depends on the export: PlateYOLO cut before its NMS gives **xyxy**,
+        a plain Ultralytics export gives **cxcywh**. Mirrors pure/infer_v8.hpp (BoxFmt)."""
         inp = self.det.get_inputs()[0]
         _, _, ih, iw = inp.shape
         xs = (np.arange(iw, dtype=np.float32) + 0.5) * (rgb.shape[1] / iw) - 0.5
@@ -155,8 +157,10 @@ class Pipeline:
         bestp = np.max(cls, axis=0)
         cand = []
         for i in np.nonzero(bestp >= conf)[0]:
-            cand.append([float(t[0, i]), float(t[1, i]), float(t[2, i]), float(t[3, i]),
-                         float(bestp[i]), int(best[i])])
+            p0, p1, p2, p3 = (float(t[0, i]), float(t[1, i]), float(t[2, i]), float(t[3, i]))
+            if fmt == "cxcywh":
+                p0, p1, p2, p3 = p0 - p2 / 2, p1 - p3 / 2, p0 + p2 / 2, p1 + p3 / 2
+            cand.append([p0, p1, p2, p3, float(bestp[i]), int(best[i])])
         cand.sort(key=lambda d: -d[4])
         keep, dead = [], [False] * len(cand)
 
@@ -259,7 +263,7 @@ class Pipeline:
         elif self.det_kind == "plateyolo":
             boxes = self.detect_plateyolo(rgb, conf)
         elif self.det_kind == "v8":
-            boxes = self.detect_v8(rgb, conf)
+            boxes = self.detect_v8(rgb, conf, fmt=self.v8_fmt)
         else:
             boxes = self.detect(rgb, imgsz, conf)
         margins = MARGINS if tta else [0.0]
@@ -284,7 +288,7 @@ def main(argv):
     ap = argparse.ArgumentParser(prog="infer.py")
     ap.add_argument("--img", required=True)
     ap.add_argument("--det", default=os.path.join(ROOT, "models", "plate_det_pyj320.onnx"))
-    ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr.onnx"))
+    ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr_v2.onnx"))
     ap.add_argument("--spec", default=os.path.join(ROOT, "spec", "labels.txt"))
     ap.add_argument("--out", default="")
     ap.add_argument("--conf", type=float, default=0.30)

@@ -41,7 +41,7 @@ function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
     if (r <= 0) fail('model did not load: ' + file);
     return r;
   };
-  const ocrNodes = load(path.join(ROOT, 'models', 'plate_ocr.onnx'), M._jl_load_ocr);
+  const ocrNodes = load(path.join(ROOT, 'models', 'plate_ocr_v2.onnx'), M._jl_load_ocr);
   const detNodes = load(path.join(ROOT, 'models', 'plate_det_pyj320.onnx'), M._jl_load_det);
   console.log('loaded: spec ' + groups + ' groups, ocr ' + ocrNodes + ' nodes, det ' + detNodes + ' nodes');
 

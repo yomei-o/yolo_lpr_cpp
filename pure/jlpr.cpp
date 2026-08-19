@@ -545,7 +545,7 @@ static int cmd_rgba(int argc, char** argv) {
 static int cmd_detect(int argc, char** argv) {
   std::string img = arg_of(argc, argv, "--img", "");
   std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_pyj320.onnx");
-  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr.onnx");
+  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v2.onnx");
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string outp = arg_of(argc, argv, "--out", "");
   bool single = has_flag(argc, argv, "--single");
