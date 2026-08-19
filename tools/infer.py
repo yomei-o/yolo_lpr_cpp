@@ -355,6 +355,42 @@ def format_json(res):
     return json.dumps(res, ensure_ascii=False, separators=(",", ":"))
 
 
+def annotate(rgb, plates, font_dir=None):
+    """Draw the boxes and the decoded plate text onto a copy of the frame.
+
+    The text is the point: a box alone cannot show whether the reading was right, and the README needs
+    pictures that a reader can check against the photo. Japanese needs a real font, so one is taken
+    from ./fonts (tools/fetch_fonts.py puts them there)."""
+    from PIL import Image, ImageDraw, ImageFont
+    im = Image.fromarray(rgb).convert("RGB")
+    d = ImageDraw.Draw(im)
+    size = max(16, im.width // 26)
+    font = None
+    for cand in ("GenSenRounded2-B.ttc", "NotoSansJP-Bold.ttf", "DroidSansFallbackFull.ttf",
+                 "meiryo.ttc", "YuGothB.ttc", "msgothic.ttc"):
+        path = os.path.join(font_dir or os.path.join(ROOT, "fonts"), cand)
+        if os.path.exists(path):
+            try:
+                font = ImageFont.truetype(path, size)
+                break
+            except Exception:
+                pass
+    for p in plates:
+        x1, y1, x2, y2 = p["box"]
+        w = max(3, im.width // 320)
+        d.rectangle([x1, y1, x2, y2], outline=(255, 60, 60), width=w)
+        label = "%s  %.2f" % (p["text"], p["det"])
+        if font is not None:
+            tb = d.textbbox((0, 0), label, font=font)
+            tw, th = tb[2] - tb[0], tb[3] - tb[1]
+            ty = max(0, y1 - th - 10)
+            d.rectangle([x1, ty, x1 + tw + 12, ty + th + 10], fill=(0, 0, 0))
+            d.text((x1 + 6, ty + 4), label, font=font, fill=(255, 235, 120))
+        else:
+            d.text((x1 + 4, max(0, y1 - 14)), label, fill=(255, 235, 120))
+    return im
+
+
 def main(argv):
     import argparse
     ap = argparse.ArgumentParser(prog="infer.py")
@@ -370,10 +406,12 @@ def main(argv):
     ap.add_argument("--corner", default="", help="corner regressor ONNX (M6); enables rectification")
     ap.add_argument("--box", nargs=4, type=float, default=None)
     ap.add_argument("--det-kind", dest="det_kind", default="v8", choices=["yolox", "v8", "plateyolo"])
+    ap.add_argument("--fmt", default="xyxy", choices=["xyxy", "cxcywh"],
+                    help="v8 box layout: PlateYOLO(NMS stripped)=xyxy, plain Ultralytics export=cxcywh")
     a = ap.parse_args(argv)
 
     rgb = load_rgb(a.img)
-    pipe = Pipeline(a.det, a.ocr, a.spec, a.det_kind, corner_path=(a.corner or None))
+    pipe = Pipeline(a.det, a.ocr, a.spec, a.det_kind, a.fmt, corner_path=(a.corner or None))
     res = pipe.run(rgb, a.imgsz, a.conf, not a.single, a.box)
 
     if a.json:
@@ -391,12 +429,8 @@ def main(argv):
         sys.stdout.buffer.write(out.getvalue().encode("utf-8"))
 
     if a.out:
-        from PIL import Image, ImageDraw
-        im = Image.fromarray(rgb)
-        d = ImageDraw.Draw(im)
-        for p in res["plates"]:
-            d.rectangle(p["box"], outline=(255, 60, 60), width=3)
-        im.save(a.out)
+        annotate(rgb, res["plates"]).save(a.out)
+        print("wrote %s" % a.out)
     return 0 if res["plates"] else 1
 
 

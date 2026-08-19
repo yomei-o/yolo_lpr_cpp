@@ -56,10 +56,15 @@ def load_crop(path, box=None, margin=0.0):
 class SynthSet:
     """A generated directory: labels.txt (11 head indices) + corners.txt (the plate's true box)."""
 
-    def __init__(self, root, spec, teach_region=False):
+    def __init__(self, root, spec, teach_region=False, uncovered=None):
         self.root = root
         self.spec = spec
         self.teach_region = teach_region
+        # Regions the real training split has no example of. For those classes synthetic glyphs are
+        # the ONLY signal available, so the region loss is enabled for them even though it is masked
+        # everywhere else. Without this the 2025 additions (十勝/日光/江戸川/安曇野/南信州) sit at
+        # their -10 init forever: measured probability 4e-11, i.e. structurally unpredictable.
+        self.uncovered = uncovered or set()
         self.items = []
         boxes = {}
         cp = os.path.join(root, "corners.txt")
@@ -87,7 +92,7 @@ class SynthSet:
         path, heads, box = self.items[i]
         x = load_crop(path, box, margin if box else 0.0)
         mask = [1] * 11
-        if not self.teach_region:
+        if not self.teach_region and heads[0] not in self.uncovered:
             # Measured (RESUME): synthetic glyphs transfer 72-92%% on digits but only ~28%% on the
             # 133-class region head, because no free font reproduces the real plate typeface. Letting
             # synthetic data train the region head therefore *overwrites* what the shipped weights
@@ -312,9 +317,18 @@ def main():
     order = [g.name for g in sp.of_kind("head") if g.name in model.heads]
     model.to(a.device).train()
 
+    # which regions does the real training split actually contain?
+    uncovered = set()
+    if a.alpr:
+        probe = AlprSet(a.alpr, sp)
+        covered = {probe.items[i][1] for i in probe.train_idx}
+        uncovered = {i for i in range(sp.head("region").n) if i not in covered}
+        print("real data covers %d of %d regions; synthetic will teach the other %d (incl. the 2025 "
+              "additions)" % (len(covered), sp.head("region").n, len(uncovered)))
+
     sets, weights = [], []
     for d in a.synth:
-        s = SynthSet(d, sp, teach_region=a.synth_region)
+        s = SynthSet(d, sp, teach_region=a.synth_region, uncovered=uncovered)
         if len(s):
             s.pick = lambda rng, n=len(s): rng.below(n)
             sets.append(s)

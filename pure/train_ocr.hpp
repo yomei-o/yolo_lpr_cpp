@@ -19,6 +19,7 @@
 // guard, so a second include in the same TU breaks the build) — the including .cpp pulls it in.
 #include <algorithm>
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -125,7 +126,13 @@ inline void list_images_recursive(const std::string& dir, std::vector<std::strin
 }
 
 // A generated directory: labels.txt (11 indices) + corners.txt (the true plate box).
-inline std::vector<Item> read_synth(const std::string& root, bool teach_region) {
+// `uncovered` = region indices the real training split has no example of. For those classes the
+// synthetic glyphs are the only signal there is, so the region loss stays enabled for them; for every
+// other region it is masked (synthetic fonts transfer at ~28% and overwrite what real plates taught).
+// Without this the 2025 additions (十勝/日光/江戸川/安曇野/南信州) can never be predicted at all —
+// measured 4e-11 probability on the shipped model.
+inline std::vector<Item> read_synth(const std::string& root, bool teach_region,
+                                    const std::set<int>& uncovered = {}) {
   std::vector<Item> items;
   std::string R = root;
   if (!R.empty() && R.back() != '/' && R.back() != '\\') R += '/';
@@ -162,7 +169,7 @@ inline std::vector<Item> read_synth(const std::string& root, bool teach_region) 
     if (!ok) continue;
     it.path = R + name;
     it.mask.assign(11, 1.f);
-    if (!teach_region) it.mask[0] = 0.f;
+    if (!teach_region && !uncovered.count(it.heads[0])) it.mask[0] = 0.f;
     auto b = boxes.find(name);
     if (b != boxes.end()) {
       it.have_box = true;
