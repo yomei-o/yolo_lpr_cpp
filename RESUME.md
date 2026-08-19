@@ -28,7 +28,8 @@ det 0.93 / 地名 conf 0.94 / 0.44 秒（WASM, node, SIMD）── CLI と同じ
 | 4隅の学習（C++、同上） | PyTorch と **loss 2.7e-06 / 勾配 1.6e-05** 一致。ゼロ初期化から 3000 step で 97% → **2.94%**（hold-out 300 枚）、その重みで実写も読める |
 | 検出器の評価（C++、同上） | `jlpr val --model det` が mAP50 / mAP50-95 まで出す。Python と数値一致（差 5e-07 以下）、`compute_ap` は ultralytics と差 0 |
 | 空クローンからの通し | clone 2 本 → ビルド → 生成 → 実写検出 → 学習 → パリティまで **通る**（`SETUP.md`） |
-| ビルド | MSVC 14.41（vcvars 不要の `build/cc.sh`）・g++ 14.2・emcc（`-msimd128`）の 3 系統 |
+| ビルド | MSVC（vcvars 不要の `build/cc.sh`）・g++・emcc（`-msimd128`）・**nvcc（`build/nvcc.sh`、`-DUSE_CUDA`）** の 4 系統。`-DUSE_EIGEN` で学習 2.5-3.4 倍（数値は同値） |
+| C++ に残っている差 | 出発点モデルの調達（`.pt` からの転移）、GPU の実行、学習の運用機能（resume / 早期打ち切り / ログ）。下の「Python にあって C++ に無いもの」節 |
 
 **残っている弱点**（数字が出ているので優先度が判断できる）:
 - **2025 追加地名**は 5 名すべて読めるようになったが、精度とのトレードオフが残る（97.9% なら 28%、
@@ -146,10 +147,11 @@ Kaggle GPU は README の kbridge 節（学習 job の先頭は必ず
    自動スキャン、手動枠。`https://yomei-o.github.io/yolo_lpr_cpp/wasm/`
 4. **色別 recall（白/黄/緑/黒）** が M7 の完了条件のまま未測定。実写の黄・緑ナンバーが必要。
    合成の色替えは簡単すぎて役に立たないことは実測済み（README の落とし穴）。
-5. **対等性の穴は埋まった**（M7b 検出器学習・M6b 4隅学習・C++ の mAP 評価、いずれも 2026-08-19 夜）。
-   残っているのは学習の**中身と速度**: mosaic 等の拡張、EMA / SGD スケジュール / warmup、`--freeze`、
-   そして CPU 速度（検出 320px batch2 で約 3.5 秒/step、4隅 batch32 で約 0.9 秒/step）。
-   本番の学習量は Python/GPU で回し、C++ は追加学習と検算に使う、という役割分担でよい。
+5. **C++ 側に残っている差は 3 つだけ**（全部の一覧は下の「Python にあって C++ に無いもの」節）:
+   **(a) 出発点モデルの調達** — `.pt` からの転移も、yolov8 グラフのゼロからの生成も C++ に無い
+   （4隅は `--init random` で持っている）。**(b) GPU の実行** — nvcc でビルドは通るが device 常駐で
+   ないので遅く、実機未確認（`colab/gpu_check.ipynb`）。**(c) 学習の運用機能** — `--resume`・
+   早期打ち切り・学習ログ。拡張と最適化と学習中 val は今日入れたので、もう差ではない。
 6. 却下済みなので触らないこと: 検出器 480 での 320/640 統合（合成では良いが実写の遠景を落とす）、
    4隅回帰 v2（合成 1.89% でも実写で悪化）、書体を増やして地名を改善（差は 1.4pt しかない）。
 
@@ -307,6 +309,26 @@ batch 32・AdamW 1e-3・CPU 45 分:
 
 Python 版は桁違いに多い合成データで回しているので差はデータ量。**C++ だけで生成 → 学習 → ONNX 出力 →
 製品経路で使用**まで通ることは確認済み（この重みで実写を読ませて `横浜 480 り 4567`、地名 conf 0.88）。
+
+## Python にあって C++ に無いもの（2026-08-19 夜時点の全部）
+
+対等性の表（README）は「機能があるか」を見るが、ここは**残差だけ**を書く。多い順ではなく、
+**効く順**に並べた。
+
+| # | 残っている差 | 中身 | どれくらい効くか |
+|---|---|---|---|
+| 1 | **出発点モデルの調達** | Python は `yolov8n.pt` から転移して ONNX に出せる（`YOLO(...).export(simplify=True)`）。C++ は**既存 ONNX の追加学習しかできない**（`--init` に ONNX が要る）。4隅だけは `--init random` でグラフごと C++ が書ける | 大。検出器を**ゼロから**作る経路が C++ に無い。yolov8 のグラフ生成器（4隅と同じことを 80 ノード規模で）か、`.pt` リーダが要る |
+| 2 | **GPU** | `build/nvcc.sh` でビルドは通る（`jlpr.cpp` ごと）が、CUDA 経路は **GEMM ごとに host↔device をステージ**する作り。実機での実行も未確認（この開発機に NVIDIA GPU が無い） | 大。本番の学習量は結局 Python/GPU。姉妹リポ（lpr_cpp / facenet_cpp）と同じ「活性値を device に置きっぱなしにする forward/backward」を書くのが本筋 |
+| 3 | **学習の運用機能** | `--resume`（optimizer と EMA の状態ごと再開）、早期打ち切り（patience）、CSV / 学習曲線のログ、AMP、multi-scale。Ultralytics は全部持っている | 中。長時間学習を C++ で回すなら必須。短い追加学習なら無くても困らない |
+| 4 | **追加のデータ拡張** | mixup / copy-paste / mosaic9 / erasing。`tools/train_det.py` が実際に使っているのは mosaic・fliplr・degrees・scale・translate・hsv・close_mosaic だけで、**それは移植済み** | 小。使っていないものを移植しても数字は動かない |
+| 5 | **EkMixer との比較** | `tools/eval_ocr.py --models ekmixer` は外部モデル（別ラベル空間 `spec/ekmixer_labels.txt`）と読み比べる。C++ は自前モデルのみ | 小。疑似ラベルの第二意見に使うだけ |
+| 6 | **`fetch_fonts.py`** | ネットワークから書体を取ってくる。C++ に HTTP は無いし、入れる気も無い | なし。同梱 2 書体で生成は完結する（`--fonts-strict`） |
+| 7 | **速度** | Eigen 込みで検出器 0.7 秒/step（batch2・320px）、4隅 0.9 秒/step（batch32） | 中。「同じ結果に到達できる」ことの証明と追加学習には足りる |
+
+**逆に、もう差が無いもの**（この行を消すために今日 1 日使った）: 生成（crop / 検出用）、
+認識器・検出器・4隅の**学習**、mAP を含む**評価**、疑似ラベル、地名の到達性チェック、
+窓サイズ掃引・色替えの診断、NMS 剥がし、ONNX の読み書き、WASM。
+パリティはすべてスクリプト化してある（`tools/parity/{labels,infer,gen,gen_det,train,train_det,train_corner,eval_det}.py`）。
 
 ## 合成データのドメインギャップ — 2026-08-19 実測
 

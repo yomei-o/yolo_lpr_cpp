@@ -88,9 +88,9 @@ node wasm/test_node.js         # ヘッドレスの回帰テスト（CLI と同�
 実測（実写 960×640、CPU 1 スレッド）: CLI **2.2 秒** / WASM(node, SIMD) **1.9 秒** で
 `横浜 200 か 3591`（地域名の信頼度 0.96）。内訳は検出 320px と 6 クロップ分の認識。
 
-**まだ暫定なところ**: 検出器は [PlateYOLO-JP](https://github.com/Kazuhito00/PlateYOLO-JP-Prototype)
-（YOLO12・AGPL-3.0）の NMS を剥がしたものを借りている（`tools/strip_nms.py`）。自前 yolov8n nc=1 に
-差し替えるのは M7 で、**それが超えるべき基準がこの暫定検出器**。4隅補正（M6）も未実装。
+**検出器は自前に差し替え済み**（M7）。借り物の [PlateYOLO-JP](https://github.com/Kazuhito00/PlateYOLO-JP-Prototype)
+（YOLO12・AGPL-3.0、NMS を `jlpr strip-nms` で剥がしたもの）は「遠景が得意な選択肢」として残してある。
+4隅補正（M6）も入っており、**3 段とも自前の学習済みモデル**で動く。
 
 参考までに、検出器を替えただけで認識側が受ける影響（同じ写真・同じ認識器）:
 
@@ -118,7 +118,7 @@ box が良くなるだけで地域名の信頼度が 0.57 → 0.92 に動く。*
 | 検出器 recall（借り物 PlateYOLO-JP） | 13.7% | 同じセット。**このセットは車体が写っていない絵が主なので借り物に不利**（借り物が得意なのは車ごと写す構図） |
 | 誤検出 | プレートが無い 12 フレームで 0 個 | 同上（借り物は 1 個） |
 | トラッキング | 0.56-0.61 秒/フレーム、3 フレームで確定 | 実写 640×480、node/SIMD |
-| C++ ⇔ Python | 推論は文字列・argmax 一致、学習は step1 の loss 差 1e-6 | `tools/parity/*.py` |
+| C++ ⇔ Python | 推論は文字列・argmax 一致。学習は認識器 step1 の loss 差 **1e-6**、検出器の損失が ultralytics と **3.1e-06**（勾配 2.7e-06）、4隅が PyTorch と **2.7e-06**（勾配 1.6e-05）。評価は mAP まで一致（差 5e-07 以下）、診断ツール（地名到達性・窓サイズ掃引）は**完全一致** | `tools/parity/*.py` |
 
 ## 実写での検出結果
 
@@ -192,6 +192,11 @@ box が良くなるだけで地域名の信頼度が 0.57 → 0.92 に動く。*
 | 地名の到達性 | `check_regions.py` ✅ | `jlpr check-regions` ✅ | 実測**完全一致**（v7_bal 42.0%、2025 追加 1/5、一度も読めない名前 80 個） |
 | 診断（窓サイズ掃引 / 色替え / NMS 剥がし） | `context_test.py` / `recolor_test.py` / `strip_nms.py` ✅ | `jlpr context-test` / `recolor-test` / `strip-nms` ✅ | context-test は det も IoU も plate px も**完全一致**。strip-nms の出力は onnxruntime が読める |
 | WASM | — | `emcc`（C++ 側の役目） | ブラウザで CLI と同じ文字列が出る |
+
+**まだ差がある 3 点**: ① 出発点モデルの調達（`.pt` からの転移も yolov8 グラフのゼロ生成も C++ に無い。
+4隅だけは `--init random` で持っている）② GPU の実行（nvcc でビルドは通るが device 常駐でないので遅く、
+実機未確認）③ 学習の運用機能（`--resume` / 早期打ち切り / 学習ログ）。
+全部の残差一覧は [RESUME.md の「Python にあって C++ に無いもの」](RESUME.md#python-にあって-c-に無いもの2026-08-19-夜時点の全部)。
 
 **Python は必須ではなく、速いだけ。** 時間に余裕があるなら **C++ だけで全部完結できる**
 （合成データ生成 → 学習 → ONNX 出力 → 推論 → WASM デモ）。逆に急ぐなら本番学習だけ Python/CUDA に投げる。
