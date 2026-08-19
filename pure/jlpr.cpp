@@ -192,6 +192,8 @@ static int cmd_gen_det(int argc, char** argv) {
   std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string font_dir = arg_of(argc, argv, "--fonts", "fonts");
   std::string bg_dir = arg_of(argc, argv, "--bg", "");
+  std::string real_dir = arg_of(argc, argv, "--real-plates", "");
+  int real_pct = std::atoi(arg_of(argc, argv, "--real-pct", "50").c_str());
   std::string only_font = arg_of(argc, argv, "--font", "");
   int count = std::atoi(arg_of(argc, argv, "--count", "16").c_str());
   int start = std::atoi(arg_of(argc, argv, "--start", "0").c_str());
@@ -222,6 +224,27 @@ static int cmd_gen_det(int argc, char** argv) {
     if (!quiet) printf("background pool: %zu files from %s\n", bgs.size(), bg_dir.c_str());
   }
 
+  // Real plate photos to paste (searched recursively): the detector needs the actual typeface,
+  // lighting and dirt, not our drawing of them. Trained on drawn plates only it reached mAP50 0.99
+  // on synthetic frames and still scored 0.1 on the real bus photo. Sorted, so the index draw picks
+  // the same file in both languages.
+  std::vector<std::string> reals;
+  if (!real_dir.empty()) {
+    std::error_code ec2;
+    for (auto& e : std::filesystem::recursive_directory_iterator(real_dir, ec2)) {
+      if (!e.is_regular_file()) continue;
+      std::string x = e.path().string();
+      std::string low = x;
+      for (char& c : low) c = (char)tolower(c);
+      if (low.size() > 4 && (low.rfind(".jpg") == low.size() - 4 || low.rfind(".png") == low.size() - 4 ||
+                             low.rfind(".jpeg") == low.size() - 5))
+        reals.push_back(x);
+    }
+    std::sort(reals.begin(), reals.end());
+    if (!quiet) printf("real plate pool: %zu files from %s (%d%% of plates)\n", reals.size(),
+                       real_dir.c_str(), real_pct);
+  }
+
   std::vector<gen::Font> fonts;
   if (!meta_only) {
     for (const std::string& f : font_paths) {
@@ -246,7 +269,8 @@ static int cmd_gen_det(int argc, char** argv) {
 #endif
   for (int i = start; i < start + count; ++i) {
     Rng rng(seed ^ ((uint64_t)i * 0x9E3779B97F4A7C15ull) ^ 0xD1B54A32D192ED03ull);
-    gen::DetSample d = gen::sample_det(rng, sp, (int)bgs.size(), (int)font_paths.size());
+    gen::DetSample d = gen::sample_det(rng, sp, (int)bgs.size(), (int)font_paths.size(),
+                                       (int)reals.size(), real_pct);
     gen::apply_share(d, imgsz);
     gen::place_det(d, imgsz);
     char name[64];
@@ -287,7 +311,18 @@ static int cmd_gen_det(int argc, char** argv) {
     if (!have_bg) gen::synth_background(canvas, d.bg_hue, d.bg_dark, rng);
 
     for (gen::DetPlate& pl : d.plates) {
-      gen::Img tex = gen::plate_texture(pl.p, sp, fonts, pl.font_idx % (int)fonts.size(), rng);
+      gen::Img tex;
+      bool got_real = false;
+      if (pl.use_real && !reals.empty()) {
+        int rw = 0, rh = 0, rc = 0;
+        unsigned char* ri = stbi_load(reals[(size_t)pl.real_idx % reals.size()].c_str(), &rw, &rh, &rc, 3);
+        if (ri) {
+          tex.w = rw; tex.h = rh; tex.d.assign(ri, ri + (size_t)rw * rh * 3);
+          stbi_image_free(ri);
+          got_real = true;
+        }
+      }
+      if (!got_real) tex = gen::plate_texture(pl.p, sp, fonts, pl.font_idx % (int)fonts.size(), rng);
       gen::paste_textured_quad(canvas, tex, pl.quad);
     }
 
