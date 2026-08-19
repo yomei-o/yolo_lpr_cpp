@@ -145,6 +145,18 @@ inline Params sample(Rng& rng, const spec::Spec& sp) {
   return p;
 }
 
+// Debug / curriculum helper: keep the contents and the framing, drop the degradation. The rng
+// draws already happened, so --clean does not disturb parity or reproducibility; it just makes the
+// image easy. Used to separate "our plate art is wrong" from "our degradation is too harsh".
+inline void make_clean(Params& p) {
+  p.brightness = 1.0; p.contrast = 1.0; p.warm = 0.0;
+  p.blur = 0.0; p.motion = 0.0; p.noise = 0.0; p.dirt = 0.0;
+  p.jpeg_q = 97;
+  if (p.plate_px < 140) p.plate_px = 140;
+  p.yaw *= 0.25; p.pitch *= 0.25; p.roll *= 0.25;
+  p.legible = true;
+}
+
 // ---- dumps that must match Python byte for byte ---------------------------------------------
 inline std::string labels_line(const std::string& file, const Params& p) {
   std::string s = file;

@@ -81,6 +81,7 @@ static int cmd_gen(int argc, char** argv) {
   int out_px = std::atoi(arg_of(argc, argv, "--out-px", "192").c_str());
   uint64_t seed = strtoull(arg_of(argc, argv, "--seed", "12345").c_str(), nullptr, 10);
   bool meta_only = has_flag(argc, argv, "--meta-only");
+  bool clean = has_flag(argc, argv, "--clean");    // no degradation (debug / curriculum)
   bool tex_dump = has_flag(argc, argv, "--tex-dump");   // also write the flat plate art (debug)
   bool quiet = has_flag(argc, argv, "--quiet");
 
@@ -125,6 +126,7 @@ static int cmd_gen(int argc, char** argv) {
     // Per-sample stream so any range can be generated independently (spec/gen.md).
     Rng rng(seed ^ ((uint64_t)i * 0x9E3779B97F4A7C15ull));
     gen::Params p = gen::sample(rng, sp);
+    if (clean) gen::make_clean(p);
     int font_idx = (int)rng.below((uint64_t)font_names.size());   // draw #29 (spec/gen.md)
     char name[64];
     snprintf(name, sizeof name, "plate%06d.png", i);

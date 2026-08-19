@@ -123,6 +123,19 @@ def sample(rng, sp):
     return p
 
 
+def make_clean(p):
+    """Mirror of gen::make_clean — contents and framing kept, degradation dropped."""
+    p.brightness = p.contrast = 1.0
+    p.warm = 0.0
+    p.blur = p.motion = p.noise = p.dirt = 0.0
+    p.jpeg_q = 97
+    p.plate_px = max(p.plate_px, 140)
+    p.yaw *= 0.25
+    p.pitch *= 0.25
+    p.roll *= 0.25
+    p.legible = True
+
+
 def heads(p):
     return [p.region, p.cls_idx[0], p.cls_idx[1], p.cls_idx[2], p.hira,
             p.serial_idx[0], p.serial_idx[1], p.serial_idx[2], p.serial_idx[3],
@@ -383,6 +396,7 @@ def main():
     ap.add_argument("--out-px", dest="out_px", type=int, default=192)
     ap.add_argument("--seed", type=int, default=12345)
     ap.add_argument("--meta-only", dest="meta_only", action="store_true")
+    ap.add_argument("--clean", action="store_true", help="no degradation (debug / curriculum)")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
@@ -401,6 +415,8 @@ def main():
     for i in range(a.start, a.start + a.count):
         rng = Rng(a.seed ^ ((i * 0x9E3779B97F4A7C15) & ((1 << 64) - 1)))
         p = sample(rng, sp)
+        if a.clean:
+            make_clean(p)
         fi = rng.below(len(font_names))                                      # 29
         name = "plate%06d.png" % i
         fm.write(meta_line(name, p, sp, font_names[fi]).encode("utf-8"))
