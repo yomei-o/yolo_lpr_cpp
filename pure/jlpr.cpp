@@ -571,11 +571,14 @@ static int cmd_detect(int argc, char** argv) {
     cfg.nc = 1;
     cfg.plate_class = 0;
     cfg.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "0").c_str());
+    // Box layout is declared, not sniffed: PlateYOLO-JP cut before its NMS gives xyxy, a plain
+    // Ultralytics export gives cxcywh. Guessing wrong yields plausible boxes in the wrong place.
+    cfg.v8_fmt = (arg_of(argc, argv, "--fmt", "xyxy") == "cxcywh") ? BoxFmt::CXCYWH : BoxFmt::XYXY;
   } else {
     cfg.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "416").c_str());
   }
   if (img.empty()) {
-    printf("usage: jlpr detect --img <file> [--det onnx] [--ocr onnx] [--out png] [--corner onnx] [--conf f] [--single] [--json]\n");
+    printf("usage: jlpr detect --img <file> [--det onnx] [--ocr onnx] [--out png] [--corner onnx] [--det-kind v8|yolox] [--fmt xyxy|cxcywh] [--conf f] [--single] [--json]\n");
     return 1;
   }
 
@@ -636,7 +639,7 @@ int main(int argc, char** argv) {
            "  jlpr labels     [--dump|--emit-header out.hpp]\n"
            "  jlpr export     --ocr <ref_dir> --out <onnx>\n"
            "  jlpr parity-ocr --ocr <onnx> --ref <ref_dir>\n"
-           "  jlpr detect     --img <file> [--det onnx] [--ocr onnx] [--out png] [--corner onnx] [--conf f] [--single] [--json]\n"
+           "  jlpr detect     --img <file> [--det onnx] [--ocr onnx] [--out png] [--corner onnx] [--det-kind v8|yolox] [--fmt xyxy|cxcywh] [--conf f] [--single] [--json]\n"
            "  jlpr rgba       --img <file> --out <file.rgba>\n"
            "  jlpr gen|train|val   (not implemented yet)\n");
     return 1;

@@ -25,7 +25,8 @@
 
 <h1>yolo_lpr_cpp — ブラウザで日本のナンバープレートを読む</h1>
 <p class="sub">
-  検出（PlateYOLO-JP 暫定／最終は自前 YOLOv8）→ 位置別 9 head 分類。ONNX を fetch して WASM で推論、送信は一切なし。
+  検出 → 位置別 11 head 分類。ONNX を fetch して WASM で推論、画像はどこにも送信されません。
+  <b>認識器は自前で学習したモデル</b>（実データ hold-out の地域名 97.9%）。検出器は上の選択で切り替えられます。
   <b>暫定の検出器は「車ごと写った小さいプレート」しか取れません</b>（実測: プレートが画面幅の
   5〜12% でスコア 0.7〜0.83、20% で 0.07、30% 以上は検出ゼロ）。つまり<b>車から数歩下がって撮る</b>のが正解で、
   プレートに寄って撮った場合は「枠を手で指定」でドラッグしてください（認識器は近接でも読めます）。
@@ -35,6 +36,14 @@
   <button id="btn-cam">カメラを開く</button>
   <input type="file" id="file" accept="image/*">
   <button id="btn-shot" disabled>フレームを取り込む</button>
+</div>
+<div class="row">
+  <label>検出器
+    <select id="detsel">
+      <option value="pyj">PlateYOLO-JP 320（借り物・実写に強い）</option>
+      <option value="v8n">自前 yolov8n 320（学習中・合成のみ）</option>
+    </select>
+  </label>
 </div>
 <div class="row">
   <button id="btn-run" class="primary" disabled>読む（検出→認識）</button>
@@ -61,9 +70,17 @@ const log = (s) => { $('log').textContent += "\n" + s; };
 let M = null, detReady = false, ocrReady = false, haveFrame = false;
 let manual = null, dragging = null;
 
-const MODELS = { det: '../models/plate_det_pyj320.onnx', ocr: '../models/plate_ocr_v2.onnx',
-                 spec: '../spec/labels.txt' };
-const DET_KIND = 1;   // 1 = [1,4+nc,N] YOLO head (PlateYOLO-JP with the NMS tail stripped)
+// Two detectors ship: the borrowed PlateYOLO-JP (YOLO12, NMS tail cut off -> xyxy) and our own
+// yolov8n trained on synthetic composites (plain Ultralytics export -> cxcywh). The box layout is
+// declared, never guessed: reading cxcywh as xyxy puts plausible boxes in the wrong place.
+const DETECTORS = {
+  pyj:  { path: '../models/plate_det_pyj320.onnx',  kind: 1,
+          label: 'PlateYOLO-JP 320（借り物・車ごと写す前提）' },
+  v8n:  { path: '../models/plate_det_v8n_320.onnx', kind: 2,
+          label: '自前 yolov8n 320（学習中・合成データのみ）' },
+};
+const MODELS = { ocr: '../models/plate_ocr_v2.onnx', spec: '../spec/labels.txt' };
+let DET_KIND = 1;
 
 function copyToHeap(bytes) {
   const p = M._malloc(bytes.length);
@@ -97,16 +114,26 @@ async function boot() {
   ocrReady = nodes > 0;
   log('認識モデル ok (' + nodes + ' nodes, ' + (ocr.length / 1048576).toFixed(2) + ' MB)');
 
-  log('検出モデルを読み込み中（約 10 MB）…');
+  await loadDetector($('detsel').value);
+  updateButtons();
+}
+
+async function loadDetector(key) {
+  const d = DETECTORS[key];
+  detReady = false;
+  updateButtons();
+  log('検出モデルを読み込み中: ' + d.label + ' …');
   try {
-    const det = await fetchBytes(MODELS.det);
+    const det = await fetchBytes(d.path);
     const pd = copyToHeap(det);
     const dn = M._jl_load_det(pd, det.length);
     M._free(pd);
     detReady = dn > 0;
-    log('検出モデル ok (' + dn + ' nodes, ' + (det.length / 1048576).toFixed(2) + ' MB)');
+    DET_KIND = d.kind;
+    log('検出モデル ok (' + dn + ' nodes, ' + (det.length / 1048576).toFixed(2) + ' MB, '
+        + (d.kind === 2 ? 'cxcywh' : 'xyxy') + ')');
   } catch (e) {
-    log('検出モデルなし (' + e.message + ') — 「枠を手で指定」だけ使えます');
+    log('この検出モデルは読めませんでした (' + e.message + ') — 「枠を手で指定」なら認識できます');
   }
   updateButtons();
 }
@@ -156,6 +183,7 @@ $('btn-shot').addEventListener('click', () => {
 });
 
 $('conf').addEventListener('input', () => { $('confv').textContent = (+$('conf').value).toFixed(2); });
+$('detsel').addEventListener('change', (e) => { if (M) loadDetector(e.target.value); });
 
 function run(box) {
   const w = cv.width, h = cv.height;

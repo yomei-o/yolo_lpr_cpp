@@ -16,6 +16,7 @@
 #include "linalg.hpp"      // matmul, transpose2d
 #include "bn.hpp"          // batchnorm2d
 #include "nd.hpp"          // rank-agnostic forward-only ops (transpose/softmax/matmul/broadcast)
+#include <deque>
 #include <map>
 #include <set>
 #include <string>
@@ -53,6 +54,7 @@ inline std::map<std::string, Tensor> run_onnx(const Graph& g, const Tensor& x,
                                              bool bn_training = false) {
   std::map<std::string, Tensor> vals;
   std::map<std::string, const IntsTensor*> imap;
+  std::deque<IntsTensor> const_ints;      // storage for Constant nodes (deque: stable addresses)
   if (preset) vals = *preset;
   else for (const auto& t : g.init_f) vals[t.name] = from_data(t.dims, t.data);
   for (const auto& t : g.init_i) imap[t.name] = &t;
@@ -62,12 +64,42 @@ inline std::map<std::string, Tensor> run_onnx(const Graph& g, const Tensor& x,
   if (in_name.empty() && !g.inputs.empty()) in_name = g.inputs[0].name;
   vals[in_name] = x;
 
-  auto get = [&](const std::string& n) -> Tensor { return vals.at(n); };
+  // Named lookup with a real error message. This used to be vals.at(n), which threw
+  // std::out_of_range with no context — and because the interpreter also *silently* skipped
+  // unsupported ops when `stop` was set, an unimplemented op turned into an uncaught exception that
+  // killed the process before stdout was even flushed. Both halves of that are fixed here.
+  const Node* cur = nullptr;
+  auto get = [&](const std::string& n) -> Tensor {
+    auto it = vals.find(n);
+    if (it == vals.end()) {
+      fprintf(stderr, "onnx_run: tensor '%s' is missing (needed by %s '%s'). An op earlier in the "
+                      "graph is probably unimplemented.\n", n.c_str(),
+              cur ? cur->op_type.c_str() : "?", cur ? cur->name.c_str() : "?");
+      fflush(stderr);
+      std::exit(2);
+    }
+    return it->second;
+  };
 
   for (const auto& nd : g.nodes) {
     const std::string& op = nd.op_type;
+    cur = &nd;
     Tensor y;
-    if (op == "Conv") {
+    if (op == "Constant") {
+      // A shape/scale carried in an attribute rather than as an initializer.
+      const Attr* at = find_attr(nd, "value");
+      if (at && at->has_tensor) {
+        if (at->t_dtype == 7) {
+          const_ints.push_back(IntsTensor{nd.output[0], at->t_dims, at->t_ints});
+          imap[nd.output[0]] = &const_ints.back();
+        } else {
+          std::vector<int64_t> dims = at->t_dims;
+          if (dims.empty()) dims.push_back((int64_t)at->t_floats.size());
+          vals[nd.output[0]] = from_data(dims, at->t_floats);
+        }
+      }
+      continue;
+    } else if (op == "Conv") {
       Tensor w = get(nd.input[1]);
       Tensor b = (nd.input.size() >= 3 && !nd.input[2].empty()) ? get(nd.input[2]) : nullptr;
       auto st = attr_ints(nd, "strides"), pd = attr_ints(nd, "pads");
@@ -158,6 +190,11 @@ inline std::map<std::string, Tensor> run_onnx(const Graph& g, const Tensor& x,
     } else if (op == "Reshape") {
       Tensor t = get(nd.input[0]);
       std::vector<int64_t> shp = imap.count(nd.input[1]) ? imap.at(nd.input[1])->data : std::vector<int64_t>{};
+      if (shp.empty()) {
+        fprintf(stderr, "onnx_run: Reshape '%s' has no shape input ('%s' is not an initializer or "
+                        "Constant)\n", nd.name.c_str(), nd.input[1].c_str());
+        std::exit(1);
+      }
       int64_t known = 1; int neg = -1;
       for (size_t i = 0; i < shp.size(); ++i) {
         if (shp[i] == -1) neg = (int)i;

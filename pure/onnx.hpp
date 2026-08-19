@@ -16,7 +16,15 @@ namespace onx {
 struct Tensor64 { std::string name; std::vector<int64_t> dims; std::vector<float> data; };  // float initializer
 struct IntsTensor { std::string name; std::vector<int64_t> dims; std::vector<int64_t> data; }; // int64 initializer
 enum AType { A_FLOAT = 1, A_INT = 2, A_STRING = 3, A_FLOATS = 6, A_INTS = 7 };
-struct Attr { std::string name; int type; int64_t i = 0; float f = 0; std::string s; std::vector<int64_t> ints; std::vector<float> floats; };
+struct Attr {
+  std::string name; int type; int64_t i = 0; float f = 0; std::string s;
+  std::vector<int64_t> ints; std::vector<float> floats;
+  // AttributeType TENSOR (4): Ultralytics exports pass Reshape/Slice shapes as Constant nodes whose
+  // value lives here, not as graph initializers. Skipping it used to make the interpreter read a
+  // missing shape and crash.
+  bool has_tensor = false; int t_dtype = 1;
+  std::vector<int64_t> t_dims, t_ints; std::vector<float> t_floats;
+};
 struct Node { std::string op_type, name; std::vector<std::string> input, output; std::vector<Attr> attr; };
 struct ValueInfo { std::string name; std::vector<int64_t> dims; };  // dim -1 = dynamic
 struct Graph {
@@ -139,11 +147,32 @@ inline void parse_tensor(RD r, Graph& g) {
   }
 }
 
+// Parse a TensorProto body into (dims, dtype, ints|floats).
+inline void parse_tensor_body(RD r, std::vector<int64_t>& dims, int& dtype,
+                             std::vector<int64_t>& ints, std::vector<float>& floats) {
+  std::string raw;
+  int f, wt;
+  dtype = 1;
+  while (r.tag(f, wt)) {
+    if (f == 1) { if (wt == 2) { RD s2 = r.sub(); while (!s2.eof()) dims.push_back((int64_t)s2.varint()); } else dims.push_back((int64_t)r.varint()); }
+    else if (f == 2) dtype = (int)r.varint();
+    else if (f == 9) raw = r.bytes();
+    else if (f == 4) { if (wt == 2) { RD s2 = r.sub(); while (!s2.eof()) floats.push_back(s2.f32()); } else floats.push_back(r.f32()); }
+    else if (f == 7) { if (wt == 2) { RD s2 = r.sub(); while (!s2.eof()) ints.push_back((int64_t)s2.varint()); } else ints.push_back((int64_t)r.varint()); }
+    else r.skip(wt);
+  }
+  if (!raw.empty()) {
+    if (dtype == 7) { ints.resize(raw.size() / 8); std::memcpy(ints.data(), raw.data(), raw.size()); }
+    else { floats.resize(raw.size() / 4); std::memcpy(floats.data(), raw.data(), raw.size()); }
+  }
+}
+
 inline Attr parse_attr(RD r) {
   Attr a; int f, wt;
   while (r.tag(f, wt)) {
     if (f == 1) a.name = r.bytes();
     else if (f == 20) a.type = (int)r.varint();
+    else if (f == 5) { a.has_tensor = true; parse_tensor_body(r.sub(), a.t_dims, a.t_dtype, a.t_ints, a.t_floats); }
     else if (f == 2) a.f = r.f32();
     else if (f == 3) a.i = (int64_t)r.varint();
     else if (f == 4) a.s = r.bytes();

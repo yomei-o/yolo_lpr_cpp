@@ -13,7 +13,11 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const fixture = process.argv[2] || path.join(ROOT, 'scratch', 'sample.rgba');
 const expect = process.argv[3] || '横浜 200 か 3591';
-const EXPECT_BOX = [248, 414, 321, 463];   // from `jlpr detect` on the same image
+const EXPECT_BOX = (process.env.EXPECT_BOX || '248,414,321,463').split(',').map(Number);
+// which detector to test: 1 = v8 head with xyxy boxes (PlateYOLO-JP, NMS stripped),
+// 2 = v8 head with cxcywh boxes (a plain Ultralytics export of our own yolov8n), 0 = the old YOLOX
+const DET_KIND = Number(process.env.DET_KIND || 1);
+const DET_PATH = process.env.DET_PATH || path.join(ROOT, 'models', 'plate_det_pyj320.onnx');
 
 function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
 
@@ -42,7 +46,7 @@ function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
     return r;
   };
   const ocrNodes = load(path.join(ROOT, 'models', 'plate_ocr_v2.onnx'), M._jl_load_ocr);
-  const detNodes = load(path.join(ROOT, 'models', 'plate_det_pyj320.onnx'), M._jl_load_det);
+  const detNodes = load(DET_PATH, M._jl_load_det);
   console.log('loaded: spec ' + groups + ' groups, ocr ' + ocrNodes + ' nodes, det ' + detNodes + ' nodes');
 
   const raw = fs.readFileSync(fixture);
@@ -53,7 +57,7 @@ function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
   M.HEAPU8.set(px, pf);
 
   const t0 = Date.now();
-  const nplates = M._jl_run(pf, w, h, 0.30, 1, -1, -1, -1, -1, 1);   // det_kind 1 = v8 head
+  const nplates = M._jl_run(pf, w, h, 0.30, 1, -1, -1, -1, -1, DET_KIND);
   const secs = (Date.now() - t0) / 1000;
   const res = JSON.parse(M.UTF8ToString(M._jl_result()));
   M._free(pf);
