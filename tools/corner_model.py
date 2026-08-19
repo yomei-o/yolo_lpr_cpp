@@ -64,10 +64,16 @@ class CornerNet(nn.Module):
 
 
 def export_onnx(model, path, opset=13):
+    """Export on the CPU. Tracing a CUDA model with a CPU dummy input fails with
+    "Expected all tensors to be on the same device" — which is how the first corner run finished
+    training and then produced no ONNX at all."""
     model.eval()
+    was = next(model.parameters()).device
+    model.to("cpu")
     dummy = torch.zeros(1, 3, IN_PX, IN_PX)
     torch.onnx.export(model, dummy, path, input_names=["input"], output_names=["corners"],
                       opset_version=opset, dynamo=False, dynamic_axes=None)
+    model.to(was)
     print("wrote %s (%.2f MB)" % (path, os.path.getsize(path) / 1048576))
 
 
