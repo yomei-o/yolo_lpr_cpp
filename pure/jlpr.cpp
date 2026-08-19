@@ -97,6 +97,9 @@ static int cmd_gen(int argc, char** argv) {
   uint64_t seed = strtoull(arg_of(argc, argv, "--seed", "12345").c_str(), nullptr, 10);
   bool meta_only = has_flag(argc, argv, "--meta-only");
   bool clean = has_flag(argc, argv, "--clean");    // no degradation (debug / curriculum)
+  // --region <n> pins the region name, --region sweep cycles through all of them (coverage tests)
+  std::string region_arg = arg_of(argc, argv, "--region", "");
+  int region_pin = region_arg.empty() ? -1 : (region_arg == "sweep" ? -2 : std::atoi(region_arg.c_str()));
   bool tex_dump = has_flag(argc, argv, "--tex-dump");   // also write the flat plate art (debug)
   bool quiet = has_flag(argc, argv, "--quiet");
 
@@ -142,6 +145,10 @@ static int cmd_gen(int argc, char** argv) {
     // Per-sample stream so any range can be generated independently (spec/gen.md).
     Rng rng(seed ^ ((uint64_t)i * 0x9E3779B97F4A7C15ull));
     gen::Params p = gen::sample(rng, sp);
+    // --region pins (or sweeps) the region name. Applied after sample() so the draw order stays as
+    // spec/gen.md documents it; used to make crops of names the real data has none of.
+    if (region_pin == -2) p.region = i % sp.head("region").n;
+    else if (region_pin >= 0) p.region = region_pin;
     if (clean) gen::make_clean(p);
     int font_idx = (int)rng.below((uint64_t)font_names.size());   // draw #29 (spec/gen.md)
     char name[64];

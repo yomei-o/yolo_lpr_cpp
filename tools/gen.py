@@ -402,6 +402,9 @@ def main():
     ap.add_argument("--meta-only", dest="meta_only", action="store_true")
     ap.add_argument("--font", default="", help="pin one face, e.g. msgothic.ttc (for A/B tests)")
     ap.add_argument("--clean", action="store_true", help="no degradation (debug / curriculum)")
+    ap.add_argument("--region", default="", help="pin the region name: an index, or 'sweep' to cycle "
+                    "through every region (for coverage tests). Applied after sample(), so the rng "
+                    "draw order in spec/gen.md is unchanged.")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
@@ -420,6 +423,10 @@ def main():
     for i in range(a.start, a.start + a.count):
         rng = Rng(a.seed ^ ((i * 0x9E3779B97F4A7C15) & ((1 << 64) - 1)))
         p = sample(rng, sp)
+        if a.region == "sweep":
+            p.region = i % sp.head("region").n
+        elif a.region:
+            p.region = int(a.region)
         if a.clean:
             make_clean(p)
         fi = rng.below(len(font_names))                                      # 29
