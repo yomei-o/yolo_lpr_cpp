@@ -158,9 +158,9 @@ def meta_line(file, p, sp, font):
                1 if p.frame else 0, p.bg_hue, p.bg_dark, 1 if p.legible else 0, font))
 
 
-def font_files(font_dir):
+def font_files(font_dir, only=""):
     return [os.path.join(font_dir, c) for c in FONT_CANDIDATES
-            if os.path.exists(os.path.join(font_dir, c))]
+            if (not only or only == c) and os.path.exists(os.path.join(font_dir, c))]
 
 
 # ---- rendering (PIL) ------------------------------------------------------------------------
@@ -396,12 +396,13 @@ def main():
     ap.add_argument("--out-px", dest="out_px", type=int, default=192)
     ap.add_argument("--seed", type=int, default=12345)
     ap.add_argument("--meta-only", dest="meta_only", action="store_true")
+    ap.add_argument("--font", default="", help="pin one face, e.g. msgothic.ttc (for A/B tests)")
     ap.add_argument("--clean", action="store_true", help="no degradation (debug / curriculum)")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
     sp = L.load(a.spec)
-    font_paths = font_files(a.fonts)
+    font_paths = font_files(a.fonts, a.font)
     if not font_paths:
         raise SystemExit("no fonts in %s — run: python tools/fetch_fonts.py --include-system" % a.fonts)
     font_names = [os.path.basename(f) for f in font_paths]

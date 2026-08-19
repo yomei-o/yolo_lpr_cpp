@@ -88,7 +88,8 @@ static int cmd_gen(int argc, char** argv) {
   spec::Spec sp = spec::load(spec_path);
   // The font list is drawn from even in --meta-only mode, so the rng stream (and therefore the
   // meta dump) is identical whether or not images are rendered.
-  std::vector<std::string> font_paths = gen::font_files(font_dir);
+  std::string only_font = arg_of(argc, argv, "--font", "");
+  std::vector<std::string> font_paths = gen::font_files(font_dir, only_font);
   std::vector<std::string> font_names;
   for (const std::string& f : font_paths) font_names.push_back(f.substr(f.find_last_of("/\\") + 1));
   if (font_paths.empty()) {
