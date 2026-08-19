@@ -171,9 +171,12 @@ def main():
     ap.add_argument("--ekmixer", default=os.path.join(ROOT, "..", "_pyj", "weight", "EkMixer-128x128.onnx"))
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--single", action="store_true", help="one crop instead of the margin spread")
+    ap.add_argument("--margin", type=float, default=0.0,
+                    help="crop margin for --single (the trainer evaluates at 0.03; the region head is "
+                         "measurably sensitive to this, which is what stage 2 exists to fix)")
     args = ap.parse_args()
 
-    margins = [0.0] if args.single else I.MARGINS
+    margins = [args.margin] if args.single else I.MARGINS
     items = scan_synth(args.data, args.limit) if args.kind == "synth" else scan(args.data, args.limit)
     if not items:
         raise SystemExit("no labelled crops under %s (kind=%s)" % (args.data, args.kind))

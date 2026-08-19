@@ -38,7 +38,11 @@ EMSCRIPTEN_KEEPALIVE int jl_load_spec(const char* text) {
 // Run on an RGBA frame (w*h*4, canvas order). tta=0 reads one crop, 1 reads the margin spread.
 // box_* < 0 means "detect"; otherwise the detector is skipped and that box is read directly
 // (the page's 「枠を手で指定」 path, which is how a hand-held close-up gets read at all).
-// det_kind: 0 = the interim YOLOX graph, 1 = a [1,4+nc,N] YOLOv8/v12-style head (NMS stripped).
+// det_kind: 0 = the interim YOLOX graph
+//           1 = a [1,4+nc,N] head whose boxes are xyxy (PlateYOLO-JP with the NMS tail cut off)
+//           2 = the same shape but cxcywh (a plain Ultralytics export of our own yolov8n)
+// Getting 1 vs 2 wrong does not crash: it produces boxes of plausible size in the wrong places,
+// which is exactly the kind of failure a demo hides. Hence an explicit parameter, no guessing.
 EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float conf, int tta,
                                 float bx0, float by0, float bx1, float by1, int det_kind) {
   if (!g_ocr_ok || !g_spec_ok) { g_result = "{\"error\":\"models not loaded\"}"; return -1; }
@@ -56,7 +60,13 @@ EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float c
     if (!g_det_ok) { g_result = "{\"error\":\"detector not loaded\"}"; return -1; }
     jl::DetCfg cfg;
     cfg.conf = conf;
-    if (det_kind == 1) { cfg.kind = jl::DetKind::V8; cfg.nc = 1; cfg.plate_class = 0; cfg.imgsz = 0; }
+    if (det_kind >= 1) {
+      cfg.kind = jl::DetKind::V8;
+      cfg.nc = 1;
+      cfg.plate_class = 0;
+      cfg.imgsz = 0;                                  // taken from the graph's declared input
+      cfg.v8_fmt = (det_kind == 2) ? BoxFmt::CXCYWH : BoxFmt::XYXY;
+    }
     boxes = jl::detect_plates(g_det, rgb.data(), w, h, cfg);
   }
 
