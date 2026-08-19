@@ -373,11 +373,21 @@ static int cmd_train(int argc, char** argv) {
 
   std::vector<trn::Item> synth_items, alpr_items;
   std::vector<int> alpr_train, alpr_val;
-  if (!synth.empty()) synth_items = trn::read_synth(synth, synth_region);
   if (!alpr.empty()) {
     alpr_items = trn::read_alpr(alpr, sp);
     trn::split_holdout(alpr_items.size(), 0.2, alpr_train, alpr_val);
   }
+  // regions the real training split covers -> the rest are taught from synthetic (see read_synth)
+  std::set<int> uncovered;
+  if (!alpr_items.empty()) {
+    std::set<int> covered;
+    for (int i : alpr_train) covered.insert(alpr_items[(size_t)i].heads[0]);
+    for (int r = 0; r < sp.head("region").n; ++r) if (!covered.count(r)) uncovered.insert(r);
+    if (!dump_loss)
+      printf("real data covers %zu of %d regions; synthetic teaches the other %zu\n", covered.size(),
+             sp.head("region").n, uncovered.size());
+  }
+  if (!synth.empty()) synth_items = trn::read_synth(synth, synth_region, uncovered);
   if (synth_items.empty() && alpr_items.empty()) {
     printf("no data: pass --synth <dir> and/or --alpr <root>\n");
     return 1;
