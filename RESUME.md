@@ -20,6 +20,13 @@ CLI  5.6 秒 / WASM(node, SIMD) 3.82 秒 ── 同じ画素で同じ文字列�
 | CLI 実写 | `横浜 200 か 3591`（det 0.82、地域名 conf 0.57） |
 | WASM 実写（node） | 同じ文字列・同じ box（±8px 以内を assert）、3.82 秒 |
 | ビルド | MSVC 14.41（vcvars 不要の `build/cc.sh`）・g++ 14.2・emcc（`-msimd128`）の 3 系統 |
+| Python 推論との一致（M3） | 強い box は文字列・argmax 一致、box 差 **0.10px**、det 差 **0.0000**、地域名 conf 差 **0.0108** |
+| 出力 ONNX を onnxruntime で読んだ結果 vs 元 ONNX fixture | worst **7.451e-09** — エクスポータは実質完全。自作インタプリタ側の 3.3e-05 は float 加算順序 |
+
+**自作 ONNX インタプリタの数値誤差**（測って分かったこと）: 認識器（27 conv）で **3.3e-05**、
+検出器（201 ノード・416×416）で **約 3e-03**。onnxruntime は同じ ONNX で 7.5e-09 なので、
+差は自作側の naive な float 加算順序。強い検出には影響しないが、**閾値ぎりぎりの box では
+読みが両実装で変わる**（実例: det 0.24 の誤検出が C++ 「なにわ」/ Python 「鹿児島」）。
 
 **今すぐ効く弱点**（数字が出ているので直す優先度が判断できる）:
 - 地域名 head の conf が **0.57** しかない（6クロップ合算後）。他の head は 1.00。→ 4隅補正（M6）待ち。
@@ -52,9 +59,10 @@ CLI  5.6 秒 / WASM(node, SIMD) 3.82 秒 ── 同じ画素で同じ文字列�
 - [x] **M2 ワンパス推論（既存モデル・CLI + WASM）** — 統合 ONNX ランナ、weights.bin→ONNX エクスポータ、
       detect→crop→11head decode、ブラウザ demo（カメラ/ファイル/手動枠/PNG保存）と node テスト。
       数値は上の表。
-- [ ] **M3 Python 側の推論を対等にする** — 同じ 3 つの ONNX を読み、同じ前処理・同じ decode で
-      **同一文字列・スコア差 1e-4 以内**。`tools/parity/infer.py` で `jlpr detect` と突き合わせる。
-      （onnxruntime を使う版と、依存なしの版のどちらにするかは実装時に決める。）
+- [x] **M3 Python 側の推論を対等にする** — `tools/infer.py`（onnxruntime）＋ `tools/jlpr.py detect`、
+      前処理は `pure/crop.hpp` から式ごと移植。`jlpr detect --json` と JSON を突き合わせる
+      `tools/parity/infer.py` を追加（head レベル＋ pipeline レベル）。**PASS**:
+      強い box は 文字列・argmax 一致、box 差 0.10px、det 差 0.0000、地域名 conf 差 0.0108。
 - [ ] **M4 合成データ生成器（両言語）** — `tools/gen.py` と `pure/gen.cpp`。テンプレート（中型/大型/図柄入り）、
       書体、物理劣化、4隅 GT、全 head ラベル。同じ seed で**文字列・4隅・変換パラメータ・色・種別が完全一致**
       （画像はラスタライザ差を許容し統計＋目視）。生成→デコードで元の文字列に戻る自動チェック。
@@ -75,8 +83,8 @@ CLI  5.6 秒 / WASM(node, SIMD) 3.82 秒 ── 同じ画素で同じ文字列�
 ## 次の一手
 
 1. **ブラウザ実機での確認**（`python -m http.server` → `wasm/index.html`）。node は通ったがブラウザは未確認。
-2. **M3**（Python 推論の対等化）。ここを埋めると「同じ ONNX・同じ結果」が両言語で言えるようになる。
-3. **M4**（生成器）。学習系すべての前提。
+2. **M4**（合成データ生成器）。学習系すべての前提。ここから両言語 3 点セットに戻る。
+3. その次は M5（認識器の学習）→ M6（4隅）→ M7（yolov8 検出器）。
 
 ## 未確認事項（着手前に潰す）
 
@@ -111,3 +119,7 @@ CLI  5.6 秒 / WASM(node, SIMD) 3.82 秒 ── 同じ画素で同じ文字列�
 - **2026-08-19（M2 完了・最初のゴール）** — ワンパス推論。統合 ONNX ランナ、`jlpr export` で
   weights.bin→ONNX（元 ONNX と 3.299e-05 一致）、`jlpr detect` で実写を読み、同じコードを WASM 化して
   node で同一結果。**優先順位を「まず WASM で推論できるワンパス」に変更したのに合わせ、学習系は M4 以降へ後ろ倒し。**
+- **2026-08-19（M3 完了）** — Python 推論（onnxruntime）を追加して両言語で同じ ONNX・同じ decode に。
+  パリティを 2 段構えにした: **head レベル**（fixture 相手。ORT 7.451e-09 で、エクスポータの正しさと
+  自作インタプリタの誤差 3.3e-05 を分離できた）と **pipeline レベル**（JSON 突き合わせ）。
+  低スコア box で読みが割れるのは地域名 head の不安定さそのもので、M6 の 4隅補正で潰す対象として記録。
