@@ -61,7 +61,7 @@ const log = (s) => { $('log').textContent += "\n" + s; };
 let M = null, detReady = false, ocrReady = false, haveFrame = false;
 let manual = null, dragging = null;
 
-const MODELS = { det: '../models/plate_det_pyj320.onnx', ocr: '../models/plate_ocr.onnx',
+const MODELS = { det: '../models/plate_det_pyj320.onnx', ocr: '../models/plate_ocr_v2.onnx',
                  spec: '../spec/labels.txt' };
 const DET_KIND = 1;   // 1 = [1,4+nc,N] YOLO head (PlateYOLO-JP with the NMS tail stripped)
 
