@@ -179,7 +179,7 @@ box が良くなるだけで地域名の信頼度が 0.57 → 0.92 に動く。*
 | ラベル表（地名138/かな/分類番号/種別） | `labels.py` ✅ | `spec.hpp` ✅ | 唯一の定義 `spec/labels.txt` を**両方が実行時にパース**（生成物ではなく同じ入力）。dump と埋め込みヘッダがバイト一致 |
 | 合成データ生成 | `gen.py` | `gen.cpp` | 同じ seed で**文字列・4隅・変換パラメータ・色・種別が完全一致**。画像はラスタライザ差（PIL/FreeType vs stb_truetype）が出るので、一致は幾何とラベルまでとし、画像は統計と目視で同等を確認 |
 | 学習（認識器） | `train_ocr.py`（PyTorch 移植、ONNX 重み読み込み） ✅ | `jlpr train`（**ONNX グラフを直接学習**） ✅ | 同じ ONNX・同じ seed・同じ batch で **step1 の loss 差 1e-6**、以降は相対 1% 以内（実測、`tools/parity/train.py`） |
-| 学習（検出器） | `train_det.py`（Ultralytics） ✅ | yolov8_cpp の v8 loss / TAL 移植が必要（M7b） | 同上の方式で比較する予定 |
+| 学習（検出器） | `train_det.py`（Ultralytics） ✅ | `jlpr train --model det`（**ONNX グラフを直接学習**） ✅ | 同じ head テンソルを両者に食わせて loss 3 項が相対 **1e-05 以内**、勾配が **3e-06 以内**（実測、`tools/parity/train_det.py`） |
 | 学習（4隅） | `train_corner.py` ✅ | `jlpr train --model corner`（未実装） | 唯一まだ Python 専用。合成 corners.txt をそのまま使うので移植は素直 |
 | head の拡張（地名 133→138） | `ocr_model.py` の重み読み込み時 ✅ | `onx::widen_heads` ✅ | 同じ ONNX から始めて**学習前の精度が一致**（追加クラス bias -10 で 92.4%、0 で 85.4%） |
 | チェックポイント選択 | `--export` / `--export-balanced` / `--export-last` ✅ | 同じ 3 フラグ ✅ | 実データ最良／実データを 1pt 以内に抑えて合成地名最大／最終step。選択規則が同一 |
@@ -310,6 +310,44 @@ Kaggle 側の実測（無料枠 T4×2 / 4 vCPU）: 合成生成 **0.06 秒/枚**
 4. 評価は **実データ hold-out のみ**で、色別・地名別・解像度別に出す
 
 目標値: 検出 mAP@0.5 ≥ 0.95（色別 recall も ≥ 0.90）、認識は**プレート全文一致 ≥ 95%**、region ≥ 98%（TTA なし）。
+
+### 検出器も C++ で学習できる（M7b、2026-08-19 夜）
+
+`jlpr train --model det` が入り、**検出器の学習も Python と対等**になった。認識器と同じ方式
+＝ **ONNX グラフをそのまま学習する**。RESUME には「v8 の損失は生の head 出力を必要とし、それは
+グラフの外側にあるので 1,100 行の移植が要る」と書いてあったが、これは**誤りだった**: Ultralytics の
+ONNX には per-level の head conv がそのまま残っている（`/model.22/cv2.<l>/cv2.<l>.2/Conv_output_0`
+＝ box 分布 64ch、`/model.22/cv3.<l>/cv3.<l>.2/Conv_output_0` ＝ クラス logit）。この 6 本で `stop`
+すれば、その先（Reshape/Concat/DFL/anchor 復号）は**推論用の尻尾**でしかない。移植したのは損失側だけ
+（`pure/train_det.hpp` 455 行 ＝ TAL 割り当て・CIoU・DFL・BCE）。head の名前ではなく
+**グラフの形**（DFL の Softmax と cls の Sigmoid から逆にたどる）で見つけるので、module 番号が違う
+エクスポートでも動く。
+
+```sh
+./jlpr.exe gen-det --out data/det_smoke --count 8 --imgsz 320 --seed 5     # 数枚だけ作る
+./jlpr.exe train --model det --data data/det_smoke --limit 2 --batch 2 --steps 40 --lr 3e-4 \
+                 --export scratch/plate_det_two.onnx
+./jlpr.exe train --model det --gradcheck          # 解析勾配 vs 中心差分（データもモデルも要らない）
+./jlpr.exe train --model det --data data/det_smoke --steps 1 --batch 2 --dump-fixture scratch/det_fix.bin
+python tools/parity/train_det.py --fixture scratch/det_fix.bin   # vs ultralytics の v8DetectionLoss
+```
+
+実測（`models/plate_det_v8n_320.onnx` から、CPU・320px・batch 2 で約 3.5 秒/step）:
+
+| 確認 | 結果 |
+|---|---|
+| 2 枚に固定して 40 step | total 2.256 → **1.520**、box 0.247 → **0.024**、cls 0.144 → **0.038** |
+| gradcheck（142 箇所） | 最悪の相対誤差 **2.7e-03** ＝ float32 中心差分の分解能どおり。割り当てが切り替わる 8 箇所は比較対象外 |
+| Ultralytics との loss 一致 | box **2.5e-07** / cls 9.7e-06 / dfl 2.3e-07 / 合計 3.1e-06（相対、ultralytics 8.4.104） |
+| Ultralytics との勾配一致 | box head **2.7e-06** / cls head **3.1e-06**（max\|差\| / max\|勾配\|） |
+| 学習後の ONNX | `jlpr detect` がそのまま読んで実写を検出（det 0.93 → 0.98。ただし合成 8 枚に 80 step 当てた副作用で誤検出が 1 件出る） |
+
+dfl 項が 0.70 前後で下げ止まるのは正常。DFL の下限は目標値の**エントロピー**（隣り合う 2 bin に理想的な
+重みを置いたときの値で、gain 1.5 込みの最大が 1.5·ln2 = 1.04）なので、**box と cls が落ちていれば効いている**。
+
+まだ入っていないもの: mosaic などの拡張、EMA・SGD スケジュール、C++ 側の mAP 評価。
+本番の学習量（合成 9000 枚 × 28 epoch）は CPU では現実的でないので、そこは引き続き Python/GPU
+（`tools/train_det.py`）で回し、C++ 側は**同じ損失に到達できることの証明と追加学習**に使う。
 
 ### 認識器はどれを使うか — 実データで測って決めた（2026-08-19）
 `alpr_jp` の地域名ラベル付き **720 枚**で 2 つの既存モデルを比較（`python tools/eval_ocr.py --data <alpr_jp>`）:

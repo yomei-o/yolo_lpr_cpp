@@ -20,6 +20,7 @@
 #include "gen_det.hpp"
 #include "onnx_train.hpp"
 #include "train_ocr.hpp"
+#include "train_det.hpp"
 #include <filesystem>
 #ifdef _OPENMP
 #include <omp.h>
@@ -376,10 +377,186 @@ static int cmd_gen_det(int argc, char** argv) {
 }
 
 
+// jlpr train --model det --gradcheck — the analytic gradient of the fused v8 loss against a central
+// difference, on small random heads. Cheap, needs no model and no data, and it is the only thing
+// standing between "the loss looks plausible" and "the loss is differentiated correctly": the
+// assignment is discrete, so a wrong sign in the CIoU or DFL chain still trains *something*.
+static int cmd_train_det_gradcheck(int argc, char** argv) {
+  uint64_t seed = strtoull(arg_of(argc, argv, "--seed", "7").c_str(), nullptr, 10);
+  const int imgsz = 64, B = 2, nc = 1, reg = 16;
+  const int64_t hw[3] = {8, 4, 2};
+  Rng rng(seed);
+  auto randn = [&]() {                                   // Box-Muller off the project's splitmix64
+    double u1 = std::max(1e-12, rng.unit()), u2 = rng.unit();
+    return (float)(std::sqrt(-2 * std::log(u1)) * std::cos(6.283185307179586 * u2));
+  };
+  std::vector<Tensor> bx, cs;
+  std::vector<float> strides;
+  for (int l = 0; l < 3; ++l) {
+    Tensor b = make_tensor({B, 4 * reg, hw[l], hw[l]}, true);
+    Tensor c = make_tensor({B, nc, hw[l], hw[l]}, true);
+    for (float& v : b->data) v = randn();
+    for (float& v : c->data) v = randn() - 2.f;          // scores start low, as in a real head
+    bx.push_back(b); cs.push_back(c);
+    strides.push_back((float)imgsz / (float)hw[l]);
+  }
+  std::vector<std::vector<std::array<float, 5>>> gts(B);
+  gts[0].push_back({0, 6, 10, 40, 30});
+  gts[0].push_back({0, 30, 34, 60, 52});
+  gts[1].push_back({0, 2, 2, 20, 14});
+  det::LossCfg cfg;
+  det::LossOut rep;
+  Tensor loss = det::v8_loss(bx, cs, strides, gts, cfg, &rep);
+  backward(loss);
+  printf("gradcheck: loss %.6f (box %.4f cls %.4f dfl %.4f, %d fg anchors)\n", rep.total, rep.box,
+         rep.cls, rep.dfl, rep.fg);
+
+  auto num_grad = [&](Tensor t, int64_t i, float h) {
+    const float keep = t->data[i];
+    det::LossOut r1, r2;
+    t->data[i] = keep + h;
+    Tensor l1 = det::v8_loss(bx, cs, strides, gts, cfg, &r1);
+    t->data[i] = keep - h;
+    Tensor l2 = det::v8_loss(bx, cs, strides, gts, cfg, &r2);
+    t->data[i] = keep;
+    const float d = (l1->data[0] - l2->data[0]) / (2 * h);
+    free_graph(l1); free_graph(l2);
+    return d;
+  };
+  double worst = 0, worst_a = 0, worst_n = 0;
+  int checked = 0, skipped = 0;
+  for (int k = 0; k < 3; ++k)
+    for (int which = 0; which < 2; ++which) {
+      Tensor t = which ? cs[k] : bx[k];
+      for (int s = 0; s < 25; ++s) {
+        const int64_t i = (int64_t)rng.below((uint64_t)t->numel());
+        const float a = t->grad[i];
+        float n = num_grad(t, i, 1e-2f);
+        // A finite difference across an assignment flip is meaningless (the loss is piecewise
+        // smooth, not smooth), so a disagreeing pair is re-tested at a tenth of the step: if the
+        // two agree there, the wide step straddled a discontinuity, not a bug.
+        double rel = std::fabs(a - n) / std::max(1e-4f, std::max(std::fabs(a), std::fabs(n)));
+        if (rel > 1e-2) {
+          const float n2 = num_grad(t, i, 1e-3f);
+          double rel2 = std::fabs(a - n2) / std::max(1e-4f, std::max(std::fabs(a), std::fabs(n2)));
+          if (rel2 < rel) { rel = rel2; n = n2; }
+          if (rel > 1e-2) { ++skipped; continue; }
+        }
+        ++checked;
+        if (rel > worst) { worst = rel; worst_a = a; worst_n = n; }
+      }
+    }
+  free_graph(loss);
+  printf("gradcheck: %d entries, worst relative error %.3e (analytic %.6f vs numeric %.6f)%s\n",
+         checked, worst, worst_a, worst_n, skipped ? "" : "");
+  if (skipped) printf("gradcheck: %d entries sat on an assignment flip and were not compared\n", skipped);
+  printf("gradcheck: %s\n", worst < 1e-2 ? "PASS" : "FAIL");
+  return worst < 1e-2 ? 0 : 1;
+}
+
+// jlpr train --model det — fine-tune the yolov8 nc=1 detector ONNX in place (pure/train_det.hpp).
+static int cmd_train_det(int argc, char** argv) {
+  if (has_flag(argc, argv, "--gradcheck")) return cmd_train_det_gradcheck(argc, argv);
+  std::string onnx_in = arg_of(argc, argv, "--init", "models/plate_det_v8n_320.onnx");
+  std::string data = arg_of(argc, argv, "--data", "");
+  std::string out = arg_of(argc, argv, "--export", "");
+  std::string fixture = arg_of(argc, argv, "--dump-fixture", "");
+  int imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "0").c_str());
+  int steps = std::atoi(arg_of(argc, argv, "--steps", "30").c_str());
+  int batch = std::atoi(arg_of(argc, argv, "--batch", "2").c_str());
+  int limit = std::atoi(arg_of(argc, argv, "--limit", "0").c_str());
+  float lr = (float)atof(arg_of(argc, argv, "--lr", "1e-4").c_str());
+  uint64_t seed = strtoull(arg_of(argc, argv, "--seed", "1234").c_str(), nullptr, 10);
+  bool dump_loss = has_flag(argc, argv, "--dump-loss");
+
+  if (data.empty()) { printf("jlpr train --model det: pass --data <dir with images/ and labels/>\n"); return 1; }
+  std::vector<det::Item> items = det::read_yolo(data);
+  if (limit > 0 && (int)items.size() > limit) items.resize((size_t)limit);
+  if (items.empty()) { printf("no images under %s/images\n", data.c_str()); return 1; }
+  size_t nbox = 0;
+  for (const det::Item& it : items) nbox += it.boxes.size();
+
+  onx::Graph g = onx::load_onnx(onnx_in);
+  det::HeadNames hn;
+  std::string why;
+  if (!det::find_v8_heads(g, hn, &why)) { printf("%s: %s\n", onnx_in.c_str(), why.c_str()); return 1; }
+  if (imgsz <= 0) {
+    int iw = 0, ih = 0;
+    jl::graph_input_hw(g, iw, ih);
+    imgsz = iw > 0 ? iw : 320;
+  }
+  onx::Trainable t = onx::make_trainable(g);
+  if (!dump_loss) {
+    printf("%s: %zu trainable tensors, %zu parameters\n", onnx_in.c_str(), t.params.size(),
+           onx::param_count(t));
+    printf("heads: box %s ... (%zu levels), cls %s ...\n", hn.box[0].c_str(), hn.box.size(),
+           hn.cls[0].c_str());
+    printf("data: %zu images, %zu boxes, imgsz %d, batch %d, %d steps, Adam lr %g\n", items.size(),
+           nbox, imgsz, batch, steps, lr);
+  }
+
+  Adam opt(t.params, lr);
+  Rng rng(seed);
+  det::LossCfg cfg;
+  for (int step = 0; step < steps; ++step) {
+    // With fewer images than the batch size, every step sees all of them in order: that is the
+    // "does this train at all" case, and a random sampler would hide the answer behind which images
+    // the draw happened to pick (measured: batch 2 out of 8 frames swings the loss by 2x per step,
+    // purely because frames carry 0-3 plates).
+    std::vector<int> idx;
+    if ((int)items.size() <= batch) for (size_t i = 0; i < items.size(); ++i) idx.push_back((int)i);
+    else for (int b = 0; b < batch; ++b) idx.push_back((int)rng.below((uint64_t)items.size()));
+    det::Batch ba = det::make_batch(items, idx, imgsz);
+    det::LossOut rep;
+    std::vector<Tensor> bxs, css;
+    Tensor loss = det::forward_loss(t, hn, ba.x, ba.gts, imgsz, cfg, &rep, &bxs, &css);
+    opt.zero_grad();
+    backward(loss);
+    opt.step();
+    if (dump_loss) printf("%d %.6f %.6f %.6f %.6f\n", step, rep.total, rep.box, rep.cls, rep.dfl);
+    else printf("step %d: loss %.4f (box %.4f cls %.4f dfl %.4f) fg %d\n", step, rep.total, rep.box,
+                rep.cls, rep.dfl, rep.fg);
+    fflush(stdout);
+    if (!fixture.empty() && step == 0) {
+      // Step 0's head tensors, gts, loss and gradients — the input tools/parity/train_det.py hands
+      // to ultralytics' own v8DetectionLoss so both sides differentiate the *same* numbers.
+      FILE* f = fopen(fixture.c_str(), "wb");
+      if (f) {
+        auto wi = [&](int32_t v) { fwrite(&v, 4, 1, f); };
+        fwrite("JLPRDET1", 1, 8, f);
+        wi((int32_t)bxs.size()); wi((int32_t)bxs[0]->shape[0]);
+        wi((int32_t)css[0]->shape[1]); wi((int32_t)(bxs[0]->shape[1] / 4)); wi((int32_t)imgsz);
+        for (size_t l = 0; l < bxs.size(); ++l) wi((int32_t)bxs[l]->shape[2]);   // square feature maps
+        for (const Tensor& b : bxs) fwrite(b->data.data(), 4, (size_t)b->numel(), f);
+        for (const Tensor& c : css) fwrite(c->data.data(), 4, (size_t)c->numel(), f);
+        int32_t ngt = 0;
+        for (const auto& v : ba.gts) ngt += (int32_t)v.size();
+        wi(ngt);
+        for (size_t b = 0; b < ba.gts.size(); ++b)
+          for (const auto& q : ba.gts[b]) { wi((int32_t)b); fwrite(q.data(), 4, 5, f); }
+        float parts[4] = {rep.total, rep.box, rep.cls, rep.dfl};
+        fwrite(parts, 4, 4, f);
+        for (const Tensor& b : bxs) fwrite(b->grad.data(), 4, (size_t)b->numel(), f);
+        for (const Tensor& c : css) fwrite(c->grad.data(), 4, (size_t)c->numel(), f);
+        fclose(f);
+        printf("wrote %s (head tensors, gts, loss and gradients of step 0)\n", fixture.c_str());
+      }
+    }
+    free_graph(loss);
+  }
+  if (!out.empty()) {
+    onx::write_back(t);
+    onx::save_onnx(t.g, out);
+    printf("wrote %s\n", out.c_str());
+  }
+  return 0;
+}
+
 // jlpr train --model ocr — fine-tune the recognizer ONNX in place (see pure/train_ocr.hpp).
 static int cmd_train(int argc, char** argv) {
   std::string model = arg_of(argc, argv, "--model", "ocr");
-  if (model != "ocr") { printf("jlpr train: only --model ocr is implemented (M5)\n"); return 1; }
+  if (model == "det") return cmd_train_det(argc, argv);
+  if (model != "ocr") { printf("jlpr train: --model must be ocr or det\n"); return 1; }
   std::string onnx_in = arg_of(argc, argv, "--init", "models/plate_ocr.onnx");
   std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string synth = arg_of(argc, argv, "--synth", "");
@@ -676,8 +853,10 @@ static int cmd_labels(int argc, char** argv) {
     }
     o << "  ;\n";
     std::string s = o.str();
-    std::ofstream of(hdr, std::ios::binary);
-    of.write(s.data(), s.size());
+    if (!trn::write_file(hdr, s.data(), s.size())) {   // UTF-8 path safe: the parity test writes into
+      printf("cannot write %s\n", hdr.c_str());        // a tempdir, which here sits under 大谷陽明/
+      return 1;
+    }
     printf("wrote %s (%zu bytes)\n", hdr.c_str(), s.size());
     return 0;
   }
@@ -876,7 +1055,11 @@ int main(int argc, char** argv) {
            "  jlpr parity-ocr --ocr <onnx> --ref <ref_dir>\n"
            "  jlpr detect     --img <file> [--det onnx] [--ocr onnx] [--out png] [--corner onnx] [--det-kind v8|yolox] [--fmt xyxy|cxcywh] [--conf f] [--single] [--json]\n"
            "  jlpr rgba       --img <file> --out <file.rgba>\n"
-           "  jlpr gen|train|val   (not implemented yet)\n");
+           "  jlpr gen|gen-det [--out dir] [--count N] [--imgsz S]\n"
+           "  jlpr train      --model ocr --synth <dir> --alpr <root> [--export onnx]\n"
+           "  jlpr train      --model det --data <yolo dir> [--init onnx] [--steps N] [--batch N] [--lr f]\n"
+           "                              [--limit N] [--export onnx] [--gradcheck] [--dump-fixture bin]\n"
+           "  jlpr val        --data <dir> [--kind alpr|synth] [--holdout]\n");
     return 1;
   }
   std::string cmd = argv[1];

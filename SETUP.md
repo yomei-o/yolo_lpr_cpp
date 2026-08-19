@@ -65,6 +65,11 @@ python tools/train_corner.py --synth data/synth --steps 3000 --batch 64 --export
 python tools/train_det.py --data data/det_train2 --data data/det_real --val data/det_val2 \
   --epochs 28 --imgsz 640 --batch 32 \
   --export models/plate_det_new.onnx --export-imgsz 320 --export-imgsz 640
+
+# 検出器（C++。既存の ONNX をそのまま学習する。CPU 320px batch2 で約 3.5 秒/step なので
+# 本番量は上の Python/GPU で回し、こちらは追加学習と「同じ損失で動く」ことの確認に使う）
+./jlpr.exe train --model det --init models/plate_det_v8n_320.onnx --data data/det \
+  --steps 200 --batch 2 --lr 1e-4 --export models/plate_det_new_320.onnx
 ```
 
 学習の設計（どのデータでどの head を学習し、どれをマスクするか）は `pure/train_ocr.hpp` の冒頭コメントと
@@ -76,6 +81,9 @@ python tools/train_det.py --data data/det_train2 --data data/det_real --val data
 ```sh
 python tools/parity/labels.py && python tools/parity/infer.py            # 仕様と推論の C++⇔Python 一致
 python tools/parity/gen.py    && python tools/parity/train.py            # 生成と学習 1 step の一致
+./jlpr.exe train --model det --gradcheck                                 # 検出損失の勾配（データ不要）
+./jlpr.exe train --model det --data data/det --steps 1 --batch 2 --dump-fixture scratch/det_fix.bin
+python tools/parity/train_det.py --fixture scratch/det_fix.bin           # 検出損失 vs ultralytics
 ./jlpr.exe val --data ../alpr_jp --kind alpr --holdout --ocr models/plate_ocr_new.onnx   # 実データ hold-out
 python tools/check_regions.py --data data/region_sweep --ocr models/plate_ocr_new.onnx --alpr ../alpr_jp
 python tools/eval_det.py --data data/det_eval --det models/plate_det_new_320.onnx --det-kind v8 --fmt cxcywh
