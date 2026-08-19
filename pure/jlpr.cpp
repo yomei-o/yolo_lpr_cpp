@@ -97,9 +97,17 @@ static int cmd_gen(int argc, char** argv) {
   uint64_t seed = strtoull(arg_of(argc, argv, "--seed", "12345").c_str(), nullptr, 10);
   bool meta_only = has_flag(argc, argv, "--meta-only");
   bool clean = has_flag(argc, argv, "--clean");    // no degradation (debug / curriculum)
-  // --region <n> pins the region name, --region sweep cycles through all of them (coverage tests)
+  // --region <n> pins the region name, `sweep` cycles all of them, `a-b` cycles an inclusive range
+  // (133-137 = the 2025 additions, for oversampling names the real data has none of)
   std::string region_arg = arg_of(argc, argv, "--region", "");
   int region_pin = region_arg.empty() ? -1 : (region_arg == "sweep" ? -2 : std::atoi(region_arg.c_str()));
+  int region_lo = -1, region_hi = -1;
+  if (region_arg.find('-') != std::string::npos && region_arg != "sweep") {
+    size_t d = region_arg.find('-');
+    region_lo = std::atoi(region_arg.substr(0, d).c_str());
+    region_hi = std::atoi(region_arg.substr(d + 1).c_str());
+    region_pin = -3;
+  }
   bool tex_dump = has_flag(argc, argv, "--tex-dump");   // also write the flat plate art (debug)
   bool quiet = has_flag(argc, argv, "--quiet");
 
@@ -148,6 +156,7 @@ static int cmd_gen(int argc, char** argv) {
     // --region pins (or sweeps) the region name. Applied after sample() so the draw order stays as
     // spec/gen.md documents it; used to make crops of names the real data has none of.
     if (region_pin == -2) p.region = i % sp.head("region").n;
+    else if (region_pin == -3) p.region = region_lo + i % (region_hi - region_lo + 1);
     else if (region_pin >= 0) p.region = region_pin;
     if (clean) gen::make_clean(p);
     int font_idx = (int)rng.below((uint64_t)font_names.size());   // draw #29 (spec/gen.md)
