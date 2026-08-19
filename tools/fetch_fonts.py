@@ -38,6 +38,9 @@ SYSTEM = [
     ("meiryo.ttc", r"C:\Windows\Fonts\meiryo.ttc"),
     ("msgothic.ttc", r"C:\Windows\Fonts\msgothic.ttc"),
     ("YuGothB.ttc", r"C:\Windows\Fonts\YuGothB.ttc"),
+    # Linux / Colab / Kaggle: whatever CJK face the image already ships (Apache-2.0 / OFL)
+    ("DroidSansFallbackFull.ttf", "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"),
+    ("NotoSansJP-Bold.ttf", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
 ]
 
 
