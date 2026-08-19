@@ -42,6 +42,18 @@
 **現在の状態: ワンパス推論が CLI と WASM で動く。認識器は学習済み、検出器は学習中。**
 進捗と残作業は [RESUME.md](RESUME.md)。
 
+## clone だけで学習できる（ゼロからの手順）
+
+このリポジトリと [dyama/alpr_jp](https://github.com/dyama/alpr_jp) の 2 本を clone すれば、
+他に何も落とさずにデータ生成・学習・評価・WASM デモまで通る。書体（再配布可能な 2 つ）と
+認識器の出発点 ONNX は同梱済み。手順は **[SETUP.md](SETUP.md)** に全部書いた。
+
+```sh
+git clone https://github.com/yomei-o/yolo_lpr_cpp.git
+git clone --depth 1 https://github.com/dyama/alpr_jp.git    # 隣に置く
+cd yolo_lpr_cpp && sh build/gcc.sh pure/jlpr.cpp -o jlpr.exe && sh tools/make_data.sh
+```
+
 ## 動かす
 
 ```sh
@@ -231,7 +243,8 @@ head 追加は分岐の GAP 出力に Dense を足すだけなので、既存 ba
 | `data/`（実データ） | **入れない** | 他人が撮った写真で、再配布する立場にない。`git clone https://github.com/dyama/alpr_jp.git ../alpr_jp` を各自で |
 | `fonts/GenSenRounded2-B.ttc` | **入れた**（17MB） | SIL OFL 1.1 で再配布可。clone しただけで生成が走り、パリティの基準書体が確実に揃う |
 | `fonts/meiryo.ttc` 等 | 入れない | Windows 付属の商用フォント。`python tools/fetch_fonts.py --include-system` で各自の PC からコピー（生成器は使った書体名を meta.txt に記録する） |
-| `models/*.onnx` | **入れた** | 合計 38MB。これが無いとデモが動かないので、リポジトリの一部として扱う |
+| `models/*.onnx` | **入れた** | 合計 40MB。これが無いとデモが動かないので、リポジトリの一部として扱う |
+| `fonts/DroidSansFallbackFull.ttf` | **入れた**（4MB） | Apache-2.0（(c) Google, Android 由来）。GenSen と合わせた 2 書体が出荷モデルの学習に使った集合そのもの（`spec/fonts.txt`） |
 
 
 ### 集める（実データ）

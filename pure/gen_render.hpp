@@ -107,6 +107,40 @@ inline std::vector<std::string> font_files(const std::string& dir, const std::st
   return out;
 }
 
+// The face is an rng draw, so the set of fonts present *is* part of the dataset definition: the same
+// seed with a different set gives the same labels and different pixels. spec/fonts.txt records the set
+// the shipped models were trained with; this reports any difference instead of letting it pass
+// silently (models/plate_ocr_v*.onnx were trained on Kaggle with 2 faces, a Windows box has 4).
+inline std::string font_manifest_diff(const std::string& spec_path,
+                                     const std::vector<std::string>& present) {
+  std::string dir = spec_path.substr(0, spec_path.find_last_of("/\\") + 1);
+  std::ifstream in(dir + "fonts.txt");
+  if (!in) return "";
+  std::vector<std::string> want;
+  std::string line;
+  while (std::getline(in, line)) {
+    while (!line.empty() && (line.back() == 0x0d || line.back() == ' ')) line.pop_back();
+    if (!line.empty() && line[0] != '#') want.push_back(line);
+  }
+  if (want.empty()) return "";
+  std::string missing, extra;
+  for (const std::string& w : want) {
+    bool have = false;
+    for (const std::string& p : present) have = have || (p == w);
+    if (!have) missing += " " + w;
+  }
+  for (const std::string& p : present) {
+    bool wanted = false;
+    for (const std::string& w : want) wanted = wanted || (p == w);
+    if (!wanted) extra += " " + p;
+  }
+  if (missing.empty() && extra.empty()) return "";
+  std::string msg = "note: font set differs from spec/fonts.txt (same labels, different pixels)";
+  if (!missing.empty()) msg += std::string(1, (char)0x0a) + "  missing:" + missing;
+  if (!extra.empty()) msg += std::string(1, (char)0x0a) + "  extra:  " + extra;
+  return msg;
+}
+
 // UTF-8 -> codepoints
 inline std::vector<int> utf8_codepoints(const std::string& s) {
   std::vector<int> cps;

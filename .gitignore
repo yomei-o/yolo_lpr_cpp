@@ -14,5 +14,8 @@ __pycache__/
 # Fonts: the OFL one IS redistributable and is committed, so a fresh clone can generate data with no
 # network. The Windows system faces (meiryo / msgothic / YuGothB) are proprietary — never commit those.
 fonts/*
-!fonts/GenSenRounded2-B.ttc
+!fonts/GenSenRounded2-B.ttc          # SIL OFL 1.1
+!fonts/DroidSansFallbackFull.ttf     # Apache-2.0, (c) Google — the second half of spec/fonts.txt
 !fonts/SIL_Open_Font_License_1.1.txt
+!fonts/Apache_License_2.0.txt
+!fonts/README.md

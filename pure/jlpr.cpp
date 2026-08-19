@@ -118,6 +118,10 @@ static int cmd_gen(int argc, char** argv) {
   std::vector<std::string> font_paths = gen::font_files(font_dir, only_font);
   std::vector<std::string> font_names;
   for (const std::string& f : font_paths) font_names.push_back(f.substr(f.find_last_of("/\\") + 1));
+  if (!quiet) {
+    std::string d = gen::font_manifest_diff(spec_path, font_names);
+    if (!d.empty()) printf("%s%c", d.c_str(), 0x0a);
+  }
   if (font_paths.empty()) {
     printf("no fonts in %s — run: python tools/fetch_fonts.py --include-system\n", font_dir.c_str());
     return 1;

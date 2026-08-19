@@ -1,0 +1,100 @@
+# ゼロから学習まで（clone 2 本だけで完結する手順）
+
+このリポジトリと `alpr_jp` を取ってくれば、他に何もダウンロードせずにデータ生成と学習ができる。
+書体は再配布可能な 2 つを同梱済み、認識器の出発点 ONNX もリポジトリに入っている。
+
+```sh
+git clone https://github.com/yomei-o/yolo_lpr_cpp.git
+git clone --depth 1 https://github.com/dyama/alpr_jp.git      # yolo_lpr_cpp と同じ階層に置く
+cd yolo_lpr_cpp
+```
+
+置き場所は `../alpr_jp`（＝リポジトリの隣）が既定。別の場所なら各コマンドの `--alpr` を変える。
+
+| 要るもの | 無いとどうなる |
+|---|---|
+| C++20 コンパイラ（g++ / MSVC。`build/gcc.sh` は vcvars 不要） | C++ レーンが使えない。Python レーンだけなら不要 |
+| Python 3.10+ ＋ `pip install -r requirements.txt` | Python レーンが使えない。C++ レーンだけなら不要 |
+| ネットワーク（**検出器の学習だけ**） | `ultralytics` が `yolov8n.pt` を取れない。認識器・4隅・生成・推論は全部オフラインで完結 |
+
+## 1. ビルド（C++ レーンを使うなら）
+
+```sh
+sh build/gcc.sh pure/jlpr.cpp -o jlpr.exe            # mingw g++
+sh build/cc.sh  pure/jlpr.cpp -o jlpr.exe            # MSVC（vcvars を自前で叩かない）
+EXTRA="-fopenmp" sh build/gcc.sh pure/jlpr.cpp -o jlpr.exe   # 生成が数倍速くなる
+```
+
+`./jlpr.exe labels --dump` が 138 地名を吐けば通っている。
+
+## 2. データを作る
+
+```sh
+sh tools/make_data.sh                # 全部（合成 3.3 万枚 ＋ 検出用 9800 フレーム ＋ 評価セット）
+sh tools/make_data.sh synth          # 認識器のデータだけ
+```
+
+- 種は README の数字を出したときと同じもの。**C++ と Python のどちらの生成器でも 1 バイト単位で同じ物が出る**
+  （`python tools/parity/gen.py` で検証できる）
+- 書体集合はデータ定義の一部（顔の選択が rng の 29 番目の draw）。`spec/fonts.txt` が契約で、
+  ディレクトリが違うと生成器が `note: font set differs from spec/fonts.txt` と言う。
+  Windows の商用書体を足したい場合は `python tools/fetch_fonts.py --include-system`（**出荷モデルとは別のデータになる**）
+- 目安（8 コア、OpenMP 有効）: 合成 3.3 万枚で 10 分前後、検出用 9800 フレームで 15 分前後
+
+## 3. 学習する
+
+同じことが両言語でできる。速いのは Python（GPU が使える）、依存が無いのは C++。
+
+```sh
+# 認識器（11 head 分類）— GPU なら 12 分、CPU なら数時間
+python tools/train_ocr.py --synth data/synth --alpr ../alpr_jp --steps 3000 --batch 64 --lr 4e-4 \
+  --real-weight 0.4 --workers 4 --eval-every 250 --eval-limit 144 \
+  --save ocr.pt --export models/plate_ocr_new.onnx --export-last models/plate_ocr_new_last.onnx
+
+./jlpr.exe train --init models/plate_ocr.onnx --synth data/synth --alpr ../alpr_jp \
+  --steps 3000 --batch 64 --lr 4e-4 --export models/plate_ocr_new.onnx
+
+# 4隅回帰
+python tools/train_corner.py --synth data/synth --steps 3000 --batch 64 --export models/plate_corner_new.onnx
+
+# 検出器（Ultralytics。yolov8n.pt を自動取得。T4 で 28 epoch 約 70 分）
+python tools/train_det.py --data data/det_train2 --data data/det_real --val data/det_val2 \
+  --epochs 28 --imgsz 640 --batch 32 \
+  --export models/plate_det_new.onnx --export-imgsz 320 --export-imgsz 640
+```
+
+学習の設計（どのデータでどの head を学習し、どれをマスクするか）は `pure/train_ocr.hpp` の冒頭コメントと
+`tools/train_ocr.py` の docstring に書いてある。**地名 head は実データ専任、ただし実データに 1 枚も無い
+地名だけ合成で教える**——ここが 2025 追加地名（十勝/日光/江戸川/安曇野/南信州）の生命線。
+
+## 4. 測る（学習したら必ず全部通す）
+
+```sh
+python tools/parity/labels.py && python tools/parity/infer.py            # 仕様と推論の C++⇔Python 一致
+python tools/parity/gen.py    && python tools/parity/train.py            # 生成と学習 1 step の一致
+./jlpr.exe val --data ../alpr_jp --kind alpr --holdout --ocr models/plate_ocr_new.onnx   # 実データ hold-out
+python tools/check_regions.py --data data/region_sweep --ocr models/plate_ocr_new.onnx --alpr ../alpr_jp
+python tools/eval_det.py --data data/det_eval --det models/plate_det_new_320.onnx --det-kind v8 --fmt cxcywh
+./jlpr.exe detect --img assets/kei-commercial-yokohama480ri4567.jpg --det models/plate_det_v8n_320.onnx \
+  --det-kind v8 --fmt cxcywh --corner models/plate_corner.onnx        # 実写 1 枚（最後は必ずこれ）
+```
+
+合成の指標だけで採否を決めないこと。4隅回帰 v2 は合成誤差が 1.93% → 1.89% と改善したのに、
+実写では地名確信度が 0.94 → 0.75 に落ちて不採用になった（README の落とし穴の表）。
+
+## 5. WASM デモ
+
+```sh
+sh build/emcc.sh                     # wasm/jlpr.js, wasm/jlpr.wasm を作り直す
+node wasm/test_node.js               # 実写フィクスチャで CLI と同じ読みになるか
+python -m http.server 8000           # http://localhost:8000/wasm/ を開く
+```
+
+モデルは `wasm/index.html` 冒頭の `DETECTORS` / `OCR` / `CORNER` が指すファイルを実行時に取りに行くので、
+`models/` を差し替えれば再ビルドは要らない。
+
+## Kaggle の無料 GPU を使う場合
+
+`kaggle_server_cpp`（kbridge）経由で回せる。手順は README の「Kaggle の GPU で学習する」と、
+あちらのリポジトリの `FOR_AGENTS.md`。学習ジョブの先頭は必ず
+`git checkout -- models/; git clean -fdq models/; git pull` にする（未追跡の onnx で pull が止まる）。
