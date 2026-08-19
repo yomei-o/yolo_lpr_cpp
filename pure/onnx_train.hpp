@@ -34,6 +34,81 @@ struct Trainable {
   std::vector<std::string> logits;           // the tensor feeding each head's Softmax
 };
 
+// Widen a head so it can name classes the shipped graph never had: the region head arrives with 133
+// names and spec/labels.txt now lists 138 (十勝/日光/江戸川/安曇野/南信州 were added in 2025). The
+// Python side does this while building its PlateNet (tools/ocr_model.py); doing it here is what lets
+// `jlpr train` start from the same ONNX and reach the same model.
+//
+// `new_bias` is the initial bias of the appended classes and is not a detail: with zero weights their
+// logit is exactly 0, which beats every real class whose logit is negative (measured: -6 points of
+// region accuracy before a single step), so a class nobody trains must start at -10. A class that IS
+// trained should start at 0 instead, or it spends the whole run climbing out of that hole (measured:
+// 1000 steps left 江戸川 at 1e-7, rank 133 of 138).
+//
+// Returns the heads it changed, as "region(133->138)" strings, in graph output order.
+inline std::vector<std::string> widen_heads(Graph& g, const std::map<std::string, int>& want,
+                                           float new_bias) {
+  std::vector<std::string> changed;
+  std::map<std::string, std::string> pre;   // head output -> the tensor its Softmax consumes
+  for (const Node& n : g.nodes)
+    if (n.op_type == "Softmax" && !n.input.empty() && !n.output.empty()) pre[n.output[0]] = n.input[0];
+
+  for (ValueInfo& out : g.outputs) {
+    // head names in the spec have no "_output" suffix; the graph outputs do. Two of them also carry an
+    // "_id" the spec dropped (same alias table as tools/ocr_model.py).
+    std::string base = out.name;
+    const std::string suffix = "_output";
+    if (base.size() > suffix.size() && base.compare(base.size() - suffix.size(), suffix.size(), suffix) == 0)
+      base = base.substr(0, base.size() - suffix.size());
+    if (base == "region_id") base = "region";
+    else if (base == "hiragana_id") base = "hiragana";
+    auto w = want.find(base);
+    if (w == want.end()) continue;
+    const std::string logits = pre.count(out.name) ? pre[out.name] : out.name;
+
+    for (const Node& n : g.nodes) {
+      bool produces = false;
+      for (const std::string& o : n.output) produces = produces || (o == logits);
+      if (!produces || n.input.size() < 3) continue;
+      Tensor64* wt = nullptr;
+      Tensor64* bt = nullptr;
+      for (Tensor64& t : g.init_f) {
+        if (t.name == n.input[1]) wt = &t;
+        if (t.name == n.input[2]) bt = &t;
+      }
+      if (!wt || !bt || bt->dims.size() != 1) break;
+      // Gemm without transB: weight is [in, out], so the classes are *columns* and widening restrides.
+      // Conv/transposed layouts put them in dim 0, which is a plain append.
+      bool cols = (n.op_type == "Gemm" && wt->dims.size() == 2 && wt->dims[1] == bt->dims[0]);
+      bool rows = (wt->dims.size() >= 1 && wt->dims[0] == bt->dims[0]);
+      int have = (int)bt->dims[0];
+      if (w->second <= have || (!cols && !rows)) break;
+      int add = w->second - have;
+      if (cols) {
+        int in = (int)wt->dims[0];
+        std::vector<float> nd((size_t)in * (size_t)w->second, 0.f);
+        for (int i = 0; i < in; ++i)
+          for (int j = 0; j < have; ++j) nd[(size_t)i * w->second + j] = wt->data[(size_t)i * have + j];
+        wt->data.swap(nd);
+        wt->dims[1] = w->second;
+      } else {
+        size_t per = wt->data.size() / (size_t)have;      // elements per output class
+        wt->data.resize((size_t)w->second * per, 0.f);
+        wt->dims[0] = w->second;
+      }
+      bt->data.resize((size_t)w->second, new_bias);
+      bt->dims[0] = w->second;
+      (void)add;
+      if (!out.dims.empty()) out.dims.back() = w->second;
+      char buf[96];
+      snprintf(buf, sizeof buf, "%s(%d->%d)", base.c_str(), have, w->second);
+      changed.push_back(buf);
+      break;
+    }
+  }
+  return changed;
+}
+
 // Build the trainable view. `train_stats=false` keeps BN running mean/var out of the parameter list
 // (they are statistics, not weights, and the graph runs BN in inference mode anyway).
 inline Trainable make_trainable(const Graph& gin, bool freeze_backbone_bn_affine = false) {

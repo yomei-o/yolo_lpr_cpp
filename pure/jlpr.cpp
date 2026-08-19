@@ -372,11 +372,6 @@ static int cmd_train(int argc, char** argv) {
   bool dump_loss = has_flag(argc, argv, "--dump-loss");   // parity: print the per-step loss only
 
   spec::Spec sp = spec::load(spec_path);
-  onx::Graph g = onx::load_onnx(onnx_in);
-  onx::Trainable t = onx::make_trainable(g);
-  if (!dump_loss)
-    printf("%s: %zu trainable tensors, %zu parameters, %zu heads\n", onnx_in.c_str(),
-           t.params.size(), onx::param_count(t), t.heads.size());
 
   std::vector<trn::Item> synth_items, alpr_items;
   std::vector<int> alpr_train, alpr_val;
@@ -395,6 +390,26 @@ static int cmd_train(int argc, char** argv) {
              sp.head("region").n, uncovered.size());
   }
   if (!synth.empty()) synth_items = trn::read_synth(synth, synth_region, uncovered);
+
+  onx::Graph g = onx::load_onnx(onnx_in);
+  // Bring the shipped graph up to the spec (region 133->138). The appended classes start inert at -10
+  // unless something will actually train them, in which case 0 — see onx::widen_heads.
+  std::map<std::string, int> want;
+  for (const spec::Group* gr : sp.of_kind("head")) want[gr->name] = gr->n;
+  float new_bias = uncovered.empty() ? -10.f : 0.f;
+  std::string nb = arg_of(argc, argv, "--new-class-bias", "");
+  if (!nb.empty()) new_bias = (float)atof(nb.c_str());
+  std::vector<std::string> widened = onx::widen_heads(g, want, new_bias);
+  onx::Trainable t = onx::make_trainable(g);
+  if (!dump_loss) {
+    printf("%s: %zu trainable tensors, %zu parameters, %zu heads\n", onnx_in.c_str(),
+           t.params.size(), onx::param_count(t), t.heads.size());
+    if (!widened.empty()) {
+      printf("widened to the spec (new-class bias %.1f):", new_bias);
+      for (const std::string& w : widened) printf(" %s", w.c_str());
+      printf("\n");
+    }
+  }
   if (synth_items.empty() && alpr_items.empty()) {
     printf("no data: pass --synth <dir> and/or --alpr <root>\n");
     return 1;
