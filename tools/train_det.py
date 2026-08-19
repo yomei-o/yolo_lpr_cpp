@@ -91,7 +91,10 @@ def main():
         sizes = a.export_imgsz or [a.imgsz]
         for sz in sizes:
             m = YOLO(best)
-            path = m.export(format="onnx", imgsz=sz, opset=13, simplify=False, nms=False, dynamic=False)
+            # simplify=True is NOT cosmetic: a plain export leaves Shape/Gather/Concat plumbing in the
+            # head, and pure/onnx_run.hpp implements neither ("tensor '/model.22/Gather_output_0' is
+            # missing"). onnxslim constant-folds it away into a graph our interpreter can run.
+            path = m.export(format="onnx", imgsz=sz, opset=13, simplify=True, nms=False, dynamic=False)
             dst = a.export if len(sizes) == 1 else a.export.replace(".onnx", "_%d.onnx" % sz)
             os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
             shutil.copyfile(path, dst)
