@@ -15,16 +15,6 @@ static spec::Spec g_spec;
 static bool g_spec_ok = false;
 static std::string g_result = "{}";
 
-static std::string json_escape(const std::string& s) {
-  std::string o;
-  for (unsigned char c : s) {
-    if (c == '"' || c == '\\') { o += '\\'; o += (char)c; }
-    else if (c < 0x20) { char b[8]; snprintf(b, sizeof b, "\\u%04x", c); o += b; }
-    else o += (char)c;
-  }
-  return o;
-}
-
 extern "C" {
 
 EMSCRIPTEN_KEEPALIVE int jl_load_det(const unsigned char* buf, int len) {
@@ -68,29 +58,11 @@ EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float c
     boxes = jl::detect_plates(g_det, rgb.data(), w, h, cfg);
   }
 
-  std::string o = "{\"plates\":[";
-  for (size_t i = 0; i < boxes.size(); ++i) {
-    const jl::Box& b = boxes[i];
-    jl::Read r = tta ? jl::read_plate_tta(g_ocr, g_spec, rgb.data(), w, h, b.x1, b.y1, b.x2, b.y2)
-                     : jl::read_plate_single(g_ocr, g_spec, rgb.data(), w, h, b.x1, b.y1, b.x2, b.y2);
-    char num[256];
-    snprintf(num, sizeof num, "%s{\"box\":[%.1f,%.1f,%.1f,%.1f],\"det\":%.3f,\"crops\":%d,",
-             i ? "," : "", b.x1, b.y1, b.x2, b.y2, b.score, r.crops);
-    o += num;
-    o += "\"text\":\"" + json_escape(r.plate.text) + "\",";
-    o += "\"region\":\"" + json_escape(r.plate.region) + "\",";
-    o += "\"cls\":\"" + json_escape(r.plate.cls) + "\",";
-    o += "\"hira\":\"" + json_escape(r.plate.hira) + "\",";
-    o += "\"num\":\"" + json_escape(r.plate.disp) + "\",";
-    o += "\"kind\":\"" + json_escape(r.plate.kind) + "\",";
-    o += "\"conf\":[";
-    for (size_t k = 0; k < r.conf.size(); ++k) {
-      snprintf(num, sizeof num, "%s%.4f", k ? "," : "", r.conf[k]);
-      o += num;
-    }
-    o += "]}";
-  }
-  o += "]}";
+  std::vector<jl::Read> reads;
+  for (const jl::Box& b : boxes)
+    reads.push_back(tta ? jl::read_plate_tta(g_ocr, g_spec, rgb.data(), w, h, b.x1, b.y1, b.x2, b.y2)
+                        : jl::read_plate_single(g_ocr, g_spec, rgb.data(), w, h, b.x1, b.y1, b.x2, b.y2));
+  std::string o = jl::plates_json(boxes, reads);
   g_result = o;
   return (int)boxes.size();
 }

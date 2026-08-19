@@ -40,7 +40,14 @@ def main(argv=None):
     q.add_argument("--seed", type=int, default=12345)
     q.set_defaults(fn=cmd_labels)
 
-    for name in ("export", "detect", "gen", "train", "val"):
+    # detect is handled by tools/infer.py, which takes the same flags as `jlpr detect`
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] == "detect":
+        import infer
+        return infer.main(argv[1:])
+
+    for name in ("export", "gen", "train", "val"):
         s = sub.add_parser(name)
         s.set_defaults(fn=lambda a, name=name: (print("jlpr.py: '%s' is not implemented yet" % name), 1)[1])
         s.add_argument("rest", nargs="*")
