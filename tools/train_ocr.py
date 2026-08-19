@@ -317,11 +317,14 @@ def main():
     order = [g.name for g in sp.of_kind("head") if g.name in model.heads]
     model.to(a.device).train()
 
-    # which regions does the real training split actually contain?
+    # which regions does the real training split actually contain? (built first: the synthetic sets
+    # need this to know which region classes they are allowed to teach)
     uncovered = set()
+    alpr = None
     if a.alpr:
-        probe = AlprSet(a.alpr, sp)
-        covered = {probe.items[i][1] for i in probe.train_idx}
+        alpr = AlprSet(a.alpr, sp)
+        alpr.pick = lambda rng: alpr.train_idx[rng.below(len(alpr.train_idx))]
+        covered = {alpr.items[i][1] for i in alpr.train_idx}
         uncovered = {i for i in range(sp.head("region").n) if i not in covered}
         print("real data covers %d of %d regions; synthetic will teach the other %d (incl. the 2025 "
               "additions)" % (len(covered), sp.head("region").n, len(uncovered)))
@@ -334,10 +337,7 @@ def main():
             sets.append(s)
             weights.append(1.0 - a.real_weight)
             print("synthetic: %d crops from %s" % (len(s), d))
-    alpr = None
-    if a.alpr:
-        alpr = AlprSet(a.alpr, sp)
-        alpr.pick = lambda rng: alpr.train_idx[rng.below(len(alpr.train_idx))]
+    if alpr is not None:
         sets.append(alpr)
         weights.append(a.real_weight)
         print("real: %d crops (%d train / %d hold-out) from %s"
