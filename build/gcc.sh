@@ -7,5 +7,5 @@ set -e
 SRC="$1"; shift
 OUT="jlpr.exe"
 if [ "$1" = "-o" ]; then OUT="$2"; shift 2; fi
-g++ -std=c++20 -O2 -Ipure -Ipure/third_party $EXTRA "$@" "$SRC" -o "$OUT"
+g++ -std=c++20 -O2 -Ipure -Ipure/third_party -Ipure/third_party/eigen_flat $EXTRA "$@" "$SRC" -o "$OUT"
 echo "built $OUT ($(g++ --version | head -1))"
