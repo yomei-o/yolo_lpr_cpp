@@ -1,0 +1,11 @@
+# The font set the shipped models were actually trained with.
+#
+# The face is an rng draw (draw #29 in spec/gen.md), so the *set present on the machine* is part of the
+# dataset definition: the same seed with a different set produces the same labels but different pixels.
+# That is not hypothetical — models/plate_ocr_v*.onnx were trained on Kaggle, where only these two
+# faces existed, while a Windows box that ran `fetch_fonts.py --include-system` has four. The
+# generators print a warning when the present set differs from this list.
+#
+# One name per line, in the order the generators offer them. `#` comments and blank lines are ignored.
+GenSenRounded2-B.ttc
+DroidSansFallbackFull.ttf

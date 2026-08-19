@@ -1,0 +1,14 @@
+# Python side. The C++ side needs none of this — see SETUP.md for the two lanes.
+#
+#   python -m pip install -r requirements.txt
+#
+# Nothing here is needed to *generate* data or to run the C++ pipeline; the split is deliberate.
+numpy>=1.24            # everything
+onnxruntime>=1.16      # tools/infer.py, tools/eval_*.py, tools/check_regions.py (inference/eval)
+Pillow>=10.0           # tools/gen.py (rendering), tools/infer.py --out (drawing results)
+
+# Training only. Skip these if you just want to run and evaluate the shipped models.
+torch>=2.1             # tools/train_ocr.py, tools/train_corner.py
+ultralytics>=8.3       # tools/train_det.py — pulls yolov8n.pt itself on first run (AGPL-3.0)
+onnxslim>=0.1.34       # detector export MUST be simplify=True or our runtime cannot read the graph
+onnx>=1.15             # graph surgery / inspection
