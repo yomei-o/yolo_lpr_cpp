@@ -402,9 +402,10 @@ def main():
     ap.add_argument("--meta-only", dest="meta_only", action="store_true")
     ap.add_argument("--font", default="", help="pin one face, e.g. msgothic.ttc (for A/B tests)")
     ap.add_argument("--clean", action="store_true", help="no degradation (debug / curriculum)")
-    ap.add_argument("--region", default="", help="pin the region name: an index, or 'sweep' to cycle "
-                    "through every region (for coverage tests). Applied after sample(), so the rng "
-                    "draw order in spec/gen.md is unchanged.")
+    ap.add_argument("--region", default="", help="pin the region name: an index, 'sweep' to cycle "
+                    "through every region, or 'a-b' to cycle an inclusive range (e.g. 133-137 = the "
+                    "2025 additions, for oversampling names real data has none of). Applied after "
+                    "sample(), so the rng draw order in spec/gen.md is unchanged.")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
@@ -425,6 +426,9 @@ def main():
         p = sample(rng, sp)
         if a.region == "sweep":
             p.region = i % sp.head("region").n
+        elif "-" in a.region:
+            lo, hi = (int(v) for v in a.region.split("-", 1))
+            p.region = lo + i % (hi - lo + 1)
         elif a.region:
             p.region = int(a.region)
         if a.clean:
