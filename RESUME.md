@@ -276,6 +276,22 @@ Ultralytics に頼んでいる処方を C++ にも入れた:
   確認する（素の resize で 100% / IoU 0.933、拡張後も 100% / IoU 0.954）。損失パリティでは絶対に
   見えない部分（間違った箱でも損失は下がる）を押さえるための検算。
 
+## ビルド 4 系統を全部通した — 2026-08-19 夜（Eigen が壊れていた / CUDA は通る）
+
+- **`-DUSE_EIGEN` は今まで一度もビルドできていなかった**。`backend.hpp` が `Eigen_Core.h` を
+  include するのに、`build/cc.sh` / `gcc.sh` の -I が `pure/third_party` までしか無く、実体は
+  `pure/third_party/eigen_flat/` にある。README には「-DUSE_EIGEN で CPU 高速化」と書いてあったが
+  試した形跡が無かった。include パスを足して実測: **検出器の学習 2.5 倍（1.8 → 0.7 秒/step）、
+  4隅の学習 3.4 倍（30 → 8.7 秒/20step）、loss も eval も完全に同値**。
+- **CUDA**: `build/nvcc.sh` を追加（Windows では nvcc が cl.exe を呼ぶので `build/cc.sh` と同じ
+  INCLUDE/LIB/PATH を手で渡す。`-std=c++17`、MSVC フラグは `/` ではなく `-` 形で渡す —
+  Git Bash が `/utf-8` を Windows パスに書き換えるため）。`pure/gpu_check.cpp`（検出器 forward の
+  チェックサム＋学習 1 step の loss と勾配 L2＋4隅 forward）と `pure/jlpr.cpp` の**両方が nvcc 13.3 /
+  sm_75 でビルド・リンクできる**ことを確認。この機に NVIDIA GPU が無いので実行は
+  `colab/gpu_check.ipynb`（CPU ビルドと GPU ビルドの出力を diff して 1e-4 以内を見る）。
+- **WASM**: エンジンを触ったので再ビルドし、`wasm/test_node.js` が CLI と同じ文字列を出すことを確認
+  （`横浜 200 か 3591`、det 0.80、1.18 秒/フレーム）。
+
 ## 4隅回帰を C++ だけで学習した — 2026-08-19 夜（ゼロ初期化から）
 
 `jlpr gen` で作った 1200 クロップ、`--init random`（出発点の ONNX も C++ が書く）、3000 step・
