@@ -210,16 +210,7 @@ static int cmd_gen_det(int argc, char** argv) {
   // Sorted so the index draw means the same file in both languages.
   std::vector<std::string> bgs;
   if (!bg_dir.empty()) {
-    std::error_code ec;
-    for (auto& e : std::filesystem::directory_iterator(bg_dir, ec)) {
-      if (!e.is_regular_file()) continue;
-      std::string x = e.path().string();
-      std::string low = x;
-      for (char& c : low) c = (char)tolower(c);
-      if (low.size() > 4 && (low.rfind(".jpg") == low.size() - 4 || low.rfind(".png") == low.size() - 4 ||
-                             low.rfind(".jpeg") == low.size() - 5))
-        bgs.push_back(x);
-    }
+    trn::list_images_recursive(bg_dir, bgs);
     std::sort(bgs.begin(), bgs.end());
     if (!quiet) printf("background pool: %zu files from %s\n", bgs.size(), bg_dir.c_str());
   }
@@ -230,15 +221,14 @@ static int cmd_gen_det(int argc, char** argv) {
   // the same file in both languages.
   std::vector<std::string> reals;
   if (!real_dir.empty()) {
-    std::error_code ec2;
-    for (auto& e : std::filesystem::recursive_directory_iterator(real_dir, ec2)) {
-      if (!e.is_regular_file()) continue;
-      std::string x = e.path().string();
-      std::string low = x;
-      for (char& c : low) c = (char)tolower(c);
-      if (low.size() > 4 && (low.rfind(".jpg") == low.size() - 4 || low.rfind(".png") == low.size() - 4 ||
-                             low.rfind(".jpeg") == low.size() - 5))
-        reals.push_back(x);
+    // comma-separated list of directories, so "the plate folders but not the negatives" is expressible
+    size_t pos = 0;
+    while (pos <= real_dir.size()) {
+      size_t comma = real_dir.find(',', pos);
+      std::string one = real_dir.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+      if (!one.empty()) trn::list_images_recursive(one, reals);
+      if (comma == std::string::npos) break;
+      pos = comma + 1;
     }
     std::sort(reals.begin(), reals.end());
     if (!quiet) printf("real plate pool: %zu files from %s (%d%% of plates)\n", reals.size(),
@@ -291,7 +281,9 @@ static int cmd_gen_det(int argc, char** argv) {
     bool have_bg = false;
     if (d.bg_real && !bgs.empty()) {
       int bw = 0, bh = 0, bc = 0;
-      unsigned char* bi = stbi_load(bgs[(size_t)d.bg_idx].c_str(), &bw, &bh, &bc, 3);
+      std::vector<unsigned char> blob = trn::read_file(bgs[(size_t)d.bg_idx]);
+      unsigned char* bi = blob.empty() ? nullptr
+          : stbi_load_from_memory(blob.data(), (int)blob.size(), &bw, &bh, &bc, 3);
       if (bi) {                                   // centre-crop to square, then scale to imgsz
         int side = std::min(bw, bh);
         int ox = (bw - side) / 2, oy = (bh - side) / 2;
@@ -315,7 +307,9 @@ static int cmd_gen_det(int argc, char** argv) {
       bool got_real = false;
       if (pl.use_real && !reals.empty()) {
         int rw = 0, rh = 0, rc = 0;
-        unsigned char* ri = stbi_load(reals[(size_t)pl.real_idx % reals.size()].c_str(), &rw, &rh, &rc, 3);
+        std::vector<unsigned char> rblob = trn::read_file(reals[(size_t)pl.real_idx % reals.size()]);
+        unsigned char* ri = rblob.empty() ? nullptr
+            : stbi_load_from_memory(rblob.data(), (int)rblob.size(), &rw, &rh, &rc, 3);
         if (ri) {
           tex.w = rw; tex.h = rh; tex.d.assign(ri, ri + (size_t)rw * rh * 3);
           stbi_image_free(ri);
@@ -668,6 +662,23 @@ static int cmd_detect(int argc, char** argv) {
 int main(int argc, char** argv) {
 #ifdef _WIN32
   _setmode(_fileno(stdout), _O_BINARY);      // keep dumps byte-identical with the Python side
+  // Windows hands main() ANSI-converted arguments, so a path like ../_alpr/自家用 arrives as CP932
+  // bytes and every UTF-8 conversion downstream turns it into garbage ("real plate pool: 0 files").
+  // Take the real command line instead and re-encode it as UTF-8, which is what the rest of this
+  // program assumes everywhere.
+  std::vector<std::string> utf8_args;
+  std::vector<char*> utf8_argv;
+  {
+    int wargc = 0;
+    LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+    if (wargv) {
+      for (int i = 0; i < wargc; ++i) utf8_args.push_back(trn::from_w(wargv[i]));
+      LocalFree(wargv);
+      for (std::string& a : utf8_args) utf8_argv.push_back(a.data());
+      argc = (int)utf8_argv.size();
+      argv = utf8_argv.data();
+    }
+  }
 #endif
   if (argc < 2) {
     printf("jlpr — Japanese license plate pipeline (C++)\n"
