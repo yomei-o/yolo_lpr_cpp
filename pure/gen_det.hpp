@@ -25,6 +25,8 @@ struct DetPlate {
   Params p;
   double share = 0.2, cx = 0.5, cy = 0.5;
   int font_idx = 0;
+  bool use_real = false;         // paste a real plate photo instead of the drawn art
+  int real_idx = 0;
   Quad quad{};
   double bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;    // clipped bbox in pixels
   bool keep = true;
@@ -42,7 +44,11 @@ struct DetSample {
 
 // Draw order (spec/gen.md, detection section). Sampling is separated from rendering so --meta-only
 // can reproduce the labels without fonts or images.
-inline DetSample sample_det(Rng& rng, const spec::Spec& sp, int n_bg, int n_fonts) {
+// `real_pct` = percentage of plates that are pasted from real photos instead of drawn. Real crops
+// carry the actual plate typeface, lighting and dirt, which is what the detector needs: trained on
+// drawn plates only, it reached mAP50 0.99 on synthetic frames and still scored 0.1 on a real photo.
+inline DetSample sample_det(Rng& rng, const spec::Spec& sp, int n_bg, int n_fonts,
+                           int n_real = 0, int real_pct = 0) {
   DetSample d;
   uint64_t np = rng.below(100);                                     // D1
   d.n_plates = np < 8 ? 0 : (np < 75 ? 1 : (np < 95 ? 2 : 3));
@@ -58,15 +64,19 @@ inline DetSample sample_det(Rng& rng, const spec::Spec& sp, int n_bg, int n_font
     pl.cx = rng.range(0.15, 0.85);                                  // D8
     pl.cy = rng.range(0.15, 0.85);                                  // D9
     pl.font_idx = n_fonts > 0 ? (int)rng.below((uint64_t)n_fonts) : 0;  // D10
+    // D11/D12 are always drawn (even with no real plates available) so the stream depends only on
+    // the flags, never on what happens to be on disk.
+    pl.use_real = (int)rng.below(100) < real_pct && n_real > 0;         // D11
+    pl.real_idx = (int)rng.below((uint64_t)(n_real > 0 ? n_real : 1));  // D12
     d.plates.push_back(pl);
   }
-  d.brightness = rng.range(0.5, 1.3);                               // D11
-  d.contrast = rng.range(0.75, 1.25);                               // D12
-  d.warm = rng.range(-0.1, 0.1);                                    // D13
-  d.blur = rng.range(0, 1.2);                                       // D14
-  d.motion = rng.range(0, 2.0);                                     // D15
-  d.noise = rng.range(0, 8);                                        // D16
-  d.jpeg_q = (int)rng.below(50) + 50;                               // D17
+  d.brightness = rng.range(0.5, 1.3);                               // D13
+  d.contrast = rng.range(0.75, 1.25);                               // D14
+  d.warm = rng.range(-0.1, 0.1);                                    // D15
+  d.blur = rng.range(0, 1.2);                                       // D16
+  d.motion = rng.range(0, 2.0);                                     // D17
+  d.noise = rng.range(0, 8);                                        // D18
+  d.jpeg_q = (int)rng.below(50) + 50;                               // D19
   return d;
 }
 

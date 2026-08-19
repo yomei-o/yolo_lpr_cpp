@@ -60,6 +60,10 @@ def main():
     ap.add_argument("--img", default=os.path.join(ROOT, "assets", "tokyu-bus-yokohama200ka3591.jpg"))
     ap.add_argument("--det", default=os.path.join(ROOT, "models", "plate_det_pyj320.onnx"))
     ap.add_argument("--det-kind", dest="det_kind", default="v8")
+    ap.add_argument("--fmt", default="xyxy", choices=["xyxy", "cxcywh"],
+                    help="box layout of a v8 head: PlateYOLO(NMS stripped)=xyxy, plain Ultralytics "
+                         "export=cxcywh. Reading one as the other puts plausible boxes in the wrong "
+                         "place — which is how this very script first reported 'no detections'")
     ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr.onnx"))
     ap.add_argument("--box", nargs=4, type=float, default=None)
     ap.add_argument("--conf", type=float, default=0.05)
@@ -67,10 +71,10 @@ def main():
     a = ap.parse_args()
 
     rgb = I.load_rgb(a.img)
-    pipe = I.Pipeline(a.det, a.ocr, os.path.join(ROOT, "spec", "labels.txt"), a.det_kind)
+    pipe = I.Pipeline(a.det, a.ocr, os.path.join(ROOT, "spec", "labels.txt"), a.det_kind, a.fmt)
     box = a.box
     if box is None:
-        found = pipe.detect_v8(rgb, conf=0.25) if a.det_kind == "v8" else pipe.detect(rgb, conf=0.25)
+        found = pipe.detect_v8(rgb, conf=0.25, fmt=a.fmt) if a.det_kind == "v8" else pipe.detect(rgb, conf=0.25)
         if not found:
             raise SystemExit("no plate on the original; pass --box x1 y1 x2 y2")
         box = found[0][:4]
@@ -81,7 +85,7 @@ def main():
     print("\n%-12s %-14s %8s %6s   %s" % ("plate share", "plate px @640", "det", "IoU", "reading"))
     for share in SHARES:
         img, pbox = crop_window(rgb, box, share)
-        boxes = pipe.detect_v8(img, conf=a.conf) if a.det_kind == "v8" else pipe.detect(img, conf=a.conf)
+        boxes = pipe.detect_v8(img, conf=a.conf, fmt=a.fmt) if a.det_kind == "v8" else pipe.detect(img, conf=a.conf)
         best, best_iou = None, 0.0
         for b in boxes:
             v = iou(b, pbox)
