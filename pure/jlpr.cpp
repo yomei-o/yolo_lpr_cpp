@@ -557,6 +557,7 @@ static int cmd_detect(int argc, char** argv) {
   std::string img = arg_of(argc, argv, "--img", "");
   std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_pyj320.onnx");
   std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v2.onnx");
+  std::string corner_p = arg_of(argc, argv, "--corner", "");   // empty = box crop + margin TTA
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string outp = arg_of(argc, argv, "--out", "");
   bool single = has_flag(argc, argv, "--single");
@@ -573,7 +574,7 @@ static int cmd_detect(int argc, char** argv) {
     cfg.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "416").c_str());
   }
   if (img.empty()) {
-    printf("usage: jlpr detect --img <file> [--det onnx] [--ocr onnx] [--out png] [--conf f] [--single] [--json]\n");
+    printf("usage: jlpr detect --img <file> [--det onnx] [--ocr onnx] [--out png] [--corner onnx] [--conf f] [--single] [--json]\n");
     return 1;
   }
 
@@ -583,6 +584,9 @@ static int cmd_detect(int argc, char** argv) {
   spec::Spec sp = spec::load(spec_p);
   onx::Graph det = onx::load_onnx(det_p);
   onx::Graph ocr = onx::load_onnx(ocr_p);
+  onx::Graph corner;
+  bool have_corner = false;
+  if (!corner_p.empty()) { corner = onx::load_onnx(corner_p); have_corner = !corner.nodes.empty(); }
   if (!as_json) printf("%s %dx%d   det=%s ocr=%s\n", img.c_str(), W, H, det_p.c_str(), ocr_p.c_str());
 
   std::vector<Det> all;
@@ -593,8 +597,15 @@ static int cmd_detect(int argc, char** argv) {
 
   for (size_t i = 0; i < boxes.size(); ++i) {
     const jl::Box& b = boxes[i];
-    jl::Read r = single ? jl::read_plate_single(ocr, sp, im, W, H, b.x1, b.y1, b.x2, b.y2)
-                        : jl::read_plate_tta(ocr, sp, im, W, H, b.x1, b.y1, b.x2, b.y2);
+    jl::Read r;
+    float corners[8];
+    jl::CornerCfg ccfg;
+    if (have_corner && jl::predict_corners(corner, im, W, H, b, ccfg, corners)) {
+      r = jl::read_plate_warped(ocr, sp, im, W, H, corners, ccfg);   // rectified: 1 forward pass
+    } else {
+      r = single ? jl::read_plate_single(ocr, sp, im, W, H, b.x1, b.y1, b.x2, b.y2)
+                 : jl::read_plate_tta(ocr, sp, im, W, H, b.x1, b.y1, b.x2, b.y2);
+    }
     reads.push_back(r);
     if (!as_json) {
       printf("  [%zu] box (%.0f,%.0f)-(%.0f,%.0f) det %.2f  crops %d\n", i, b.x1, b.y1, b.x2, b.y2,
@@ -624,7 +635,7 @@ int main(int argc, char** argv) {
            "  jlpr labels     [--dump|--emit-header out.hpp]\n"
            "  jlpr export     --ocr <ref_dir> --out <onnx>\n"
            "  jlpr parity-ocr --ocr <onnx> --ref <ref_dir>\n"
-           "  jlpr detect     --img <file> [--det onnx] [--ocr onnx] [--out png] [--conf f] [--single] [--json]\n"
+           "  jlpr detect     --img <file> [--det onnx] [--ocr onnx] [--out png] [--corner onnx] [--conf f] [--single] [--json]\n"
            "  jlpr rgba       --img <file> --out <file.rgba>\n"
            "  jlpr gen|train|val   (not implemented yet)\n");
     return 1;

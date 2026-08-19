@@ -12,6 +12,7 @@
 #include "infer_yolox.hpp"
 #include "infer_v8.hpp"
 #include "crop.hpp"
+#include "warp.hpp"
 #include "spec.hpp"
 #include <algorithm>
 #include <string>
@@ -158,6 +159,53 @@ inline Read read_plate_single(const onx::Graph& ocr, const spec::Spec& sp, const
 inline Read read_plate_tta(const onx::Graph& ocr, const spec::Spec& sp, const unsigned char* rgb,
                           int W, int H, float x0, float y0, float x1, float y1) {
   return read_plate(ocr, sp, rgb, W, H, x0, y0, x1, y1, default_margins());
+}
+
+// ---- stage 2: corner regression + rectification ---------------------------------------------
+struct CornerCfg {
+  int in_px = 64;
+  float expand = 0.25f;          // how much context around the box the corner net sees
+  float margin = 0.06f;          // border kept around the plate in the rectified crop
+};
+
+// Predict the plate's 4 corners (image pixels, TL/TR/BR/BL) from a detector box.
+inline bool predict_corners(const onx::Graph& corner, const unsigned char* rgb, int W, int H,
+                           const Box& b, const CornerCfg& cfg, float out[8]) {
+  float win[4];
+  std::vector<float> in = corner_input(rgb, W, H, b.x1, b.y1, b.x2, b.y2, cfg.expand, cfg.in_px, win);
+  Tensor x = from_data({1, 3, cfg.in_px, cfg.in_px}, std::move(in));
+  auto vals = onx::run_onnx(corner, x);
+  std::string name = corner.outputs.empty() ? std::string() : corner.outputs[0].name;
+  if (name.empty() || !vals.count(name)) return false;
+  const std::vector<float>& p = vals.at(name)->data;
+  if (p.size() < 8) return false;
+  for (int i = 0; i < 4; ++i) {                        // normalised crop coords -> image pixels
+    out[2 * i] = win[0] + p[2 * i] * (win[2] - win[0]);
+    out[2 * i + 1] = win[1] + p[2 * i + 1] * (win[3] - win[1]);
+  }
+  return true;
+}
+
+// Read a plate through the rectifier: one forward pass, no TTA — the framing is now fixed by the
+// corners instead of being averaged over six guesses.
+inline Read read_plate_warped(const onx::Graph& ocr, const spec::Spec& sp, const unsigned char* rgb,
+                             int W, int H, const float corners[8], const CornerCfg& cfg) {
+  std::vector<std::string> hn = ocr_head_names(ocr);
+  std::vector<float> in = warp_to_input(rgb, W, H, corners, cfg.margin, 128);
+  Tensor xt = from_data({1, 3, 128, 128}, std::move(in));
+  auto vals = onx::run_onnx(ocr, xt);
+  Read r;
+  r.crops = 1;
+  for (size_t h = 0; h < hn.size(); ++h) {
+    const std::vector<float>& p = vals.at(hn[h])->data;
+    int best = 0;
+    double tot = 0;
+    for (size_t i = 0; i < p.size(); ++i) { tot += p[i]; if (p[i] > p[best]) best = (int)i; }
+    r.arg.push_back(best);
+    r.conf.push_back(tot > 0 ? (float)(p[best] / tot) : 0.f);
+  }
+  r.plate = spec::decode(sp, r.arg);
+  return r;
 }
 
 // ---- result serialisation -------------------------------------------------------------------
