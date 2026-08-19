@@ -109,11 +109,59 @@ inline std::vector<std::string> widen_heads(Graph& g, const std::map<std::string
   return changed;
 }
 
+// Which initializers are *weights* — the only tensors an optimiser may touch.
+//
+// THIS FILTER IS NOT COSMETIC. `init_f` also holds tensors the graph needs to keep **exactly**: the
+// Resize `scales` of a yolov8 neck is the float tensor [1,1,2,2], and an optimiser with weight decay
+// shrinks it to 1.9999996 — after which the interpreter's `(int64_t)scale` upsamples by 1 instead of
+// 2, the neck stops aligning, and the model is destroyed by a change of 2e-7. Measured: one AdamW
+// step with the default 5e-4 decay took the training loss from 2.90 to 23.13 and mAP50 from 0.995 to
+// 0.005, with every actual weight still correct to seven digits. Gradient descent alone never caught
+// it because those tensors get no gradient — decoupled weight decay does not ask.
+//
+// `needed` (optional) restricts the walk to the subgraph that produces those tensors: for the
+// detector the loss is attached to the six head convs, so the DFL projection and the decode tail
+// behind them are not parameters either, however conv-shaped they look.
+inline std::set<std::string> weight_initializers(const Graph& g, const std::set<std::string>& needed = {}) {
+  std::map<std::string, const Node*> prod;
+  for (const Node& n : g.nodes)
+    for (const std::string& o : n.output) prod[o] = &n;
+  std::set<const Node*> keep;
+  if (needed.empty()) {
+    for (const Node& n : g.nodes) keep.insert(&n);
+  } else {
+    std::vector<std::string> stack(needed.begin(), needed.end());
+    while (!stack.empty()) {
+      const std::string name = stack.back();
+      stack.pop_back();
+      auto it = prod.find(name);
+      if (it == prod.end() || keep.count(it->second)) continue;
+      keep.insert(it->second);
+      for (const std::string& in : it->second->input) stack.push_back(in);
+    }
+  }
+  std::set<std::string> inits;
+  for (const Tensor64& t : g.init_f) inits.insert(t.name);
+  std::set<std::string> out;
+  auto take = [&](const Node* n, size_t i) {
+    if (i < n->input.size() && inits.count(n->input[i])) out.insert(n->input[i]);
+  };
+  for (const Node* n : keep) {
+    if (n->op_type == "Conv" || n->op_type == "ConvTranspose" || n->op_type == "Gemm") { take(n, 1); take(n, 2); }
+    else if (n->op_type == "BatchNormalization") { take(n, 1); take(n, 2); }   // scale/bias; stats below
+    else if (n->op_type == "MatMul" || n->op_type == "PRelu") take(n, 1);
+  }
+  return out;
+}
+
 // Build the trainable view. `train_stats=false` keeps BN running mean/var out of the parameter list
-// (they are statistics, not weights, and the graph runs BN in inference mode anyway).
-inline Trainable make_trainable(const Graph& gin, bool freeze_backbone_bn_affine = false) {
+// (they are statistics, not weights, and the graph runs BN in inference mode anyway). `needed` is
+// passed through to weight_initializers: name the tensors the loss actually reads.
+inline Trainable make_trainable(const Graph& gin, bool freeze_backbone_bn_affine = false,
+                                const std::set<std::string>& needed = {}) {
   Trainable t;
   t.g = gin;
+  const std::set<std::string> weights = weight_initializers(gin, needed);
   // which initializers are BN statistics (inputs 3 and 4 of a BatchNormalization node)
   std::set<std::string> stats, bn_affine;
   for (const Node& n : t.g.nodes) {
@@ -124,7 +172,7 @@ inline Trainable make_trainable(const Graph& gin, bool freeze_backbone_bn_affine
     stats.insert(n.input[4]);
   }
   for (const Tensor64& tt : t.g.init_f) {
-    bool trainable = !stats.count(tt.name) &&
+    bool trainable = weights.count(tt.name) && !stats.count(tt.name) &&
                      !(freeze_backbone_bn_affine && bn_affine.count(tt.name));
     Tensor v = from_data(tt.dims, tt.data, trainable);
     t.init[tt.name] = v;

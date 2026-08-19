@@ -26,6 +26,7 @@
 #include "eval_det.hpp"
 #include "train_corner.hpp"
 #include <filesystem>
+#include <functional>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -381,6 +382,67 @@ static int cmd_gen_det(int argc, char** argv) {
 }
 
 
+// Detector evaluation over a YOLO-format directory: the product path (full graph, decode tail, NMS)
+// scored with pure/eval_det.hpp. Shared by `jlpr val --model det` and by the in-training validation,
+// so "the number the trainer chased" and "the number the CLI reports" cannot drift apart.
+struct DetEval {
+  evd::Report r;
+  std::vector<int> tp_b, gt_b;
+  int fp_bucket = 0, n_det_at_conf = 0, empty_frames = 0, fp_empty = 0, n_gt = 0;
+  size_t frames = 0;
+};
+
+static DetEval eval_det_dir(const onx::Graph& det, jl::DetCfg cfg, const std::string& data, int limit,
+                            float conf, float iou_thr, bool progress) {
+  DetEval e;
+  e.tp_b.assign(evd::buckets().size(), 0);
+  e.gt_b.assign(evd::buckets().size(), 0);
+  std::vector<std::string> files;
+  trn::list_images_recursive(data + "/images", files);
+  std::sort(files.begin(), files.end());
+  if (limit > 0 && (int)files.size() > limit) files.resize((size_t)limit);
+  e.frames = files.size();
+  const std::vector<float> thr = evd::iou_thresholds();
+  std::vector<evd::Scored> all;
+  for (size_t k = 0; k < files.size(); ++k) {
+    int W = 0, H = 0, C = 0;
+    std::vector<unsigned char> blob = trn::read_file(files[k]);
+    unsigned char* im = blob.empty() ? nullptr
+                                     : stbi_load_from_memory(blob.data(), (int)blob.size(), &W, &H, &C, 3);
+    if (!im) { printf("cannot read %s\n", files[k].c_str()); continue; }
+    std::string stem = files[k].substr(files[k].find_last_of("/\\") + 1);
+    stem = stem.substr(0, stem.find_last_of('.'));
+    std::vector<evd::GtBox> gts;
+    {
+      std::vector<unsigned char> lb = trn::read_file(data + "/labels/" + stem + ".txt");
+      std::istringstream ss(std::string(lb.begin(), lb.end()));
+      std::string line;
+      while (std::getline(ss, line)) {
+        std::istringstream ls(line);
+        int c; float xc, yc, w, h;
+        if (!(ls >> c >> xc >> yc >> w >> h)) continue;
+        if (w <= 0 || h <= 0) continue;
+        gts.push_back({(xc - w / 2) * W, (yc - h / 2) * H, (xc + w / 2) * W, (yc + h / 2) * H, w});
+      }
+    }
+    std::vector<jl::Box> boxes = jl::detect_plates(det, im, W, H, cfg);
+    stbi_image_free(im);
+    std::vector<evd::DetBox> dets, strong;
+    for (const jl::Box& b : boxes) {
+      dets.push_back({b.x1, b.y1, b.x2, b.y2, b.score});
+      if (b.score >= conf) strong.push_back(dets.back());
+    }
+    e.n_gt += (int)gts.size();
+    e.n_det_at_conf += (int)strong.size();
+    if (gts.empty()) { ++e.empty_frames; e.fp_empty += (int)strong.size(); }
+    evd::match_frame(dets, gts, thr, all);                            // confidence-ranked, for mAP
+    evd::bucket_match(strong, gts, iou_thr, e.tp_b, e.gt_b, e.fp_bucket);   // per-gt best IoU
+    if (progress && (k + 1) % 100 == 0) { printf("  %zu/%zu\n", k + 1, files.size()); fflush(stdout); }
+  }
+  e.r = evd::summarize(all, e.n_gt, conf);
+  return e;
+}
+
 // jlpr train --model det --gradcheck — the analytic gradient of the fused v8 loss against a central
 // difference, on small random heads. Cheap, needs no model and no data, and it is the only thing
 // standing between "the loss looks plausible" and "the loss is differentiated correctly": the
@@ -459,19 +521,49 @@ static int cmd_train_det_gradcheck(int argc, char** argv) {
 }
 
 // jlpr train --model det — fine-tune the yolov8 nc=1 detector ONNX in place (pure/train_det.hpp).
+// The loss is pinned to Ultralytics' (tools/parity/train_det.py); everything around it — SGD with
+// warmup and a decaying schedule, EMA, mosaic/flip/hsv/affine augmentation, close_mosaic, freezing,
+// validation-driven checkpoint selection — is the same recipe tools/train_det.py asks Ultralytics for,
+// so a run here is a run there minus the speed.
 static int cmd_train_det(int argc, char** argv) {
   if (has_flag(argc, argv, "--gradcheck")) return cmd_train_det_gradcheck(argc, argv);
   std::string onnx_in = arg_of(argc, argv, "--init", "models/plate_det_v8n_320.onnx");
   std::string data = arg_of(argc, argv, "--data", "");
+  std::string valdir = arg_of(argc, argv, "--val", "");
   std::string out = arg_of(argc, argv, "--export", "");
+  std::string out_best = arg_of(argc, argv, "--export-best", "");
   std::string fixture = arg_of(argc, argv, "--dump-fixture", "");
+  std::string optim = arg_of(argc, argv, "--optim", "sgd");
   int imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "0").c_str());
   int steps = std::atoi(arg_of(argc, argv, "--steps", "30").c_str());
+  int epochs = std::atoi(arg_of(argc, argv, "--epochs", "0").c_str());
   int batch = std::atoi(arg_of(argc, argv, "--batch", "2").c_str());
   int limit = std::atoi(arg_of(argc, argv, "--limit", "0").c_str());
-  float lr = (float)atof(arg_of(argc, argv, "--lr", "1e-4").c_str());
+  int freeze = std::atoi(arg_of(argc, argv, "--freeze", "0").c_str());
+  int val_every = std::atoi(arg_of(argc, argv, "--val-every", "0").c_str());
+  int val_limit = std::atoi(arg_of(argc, argv, "--val-limit", "0").c_str());
+  float lr0 = (float)atof(arg_of(argc, argv, "--lr", optim == "sgd" ? "0.002" : "1e-4").c_str());
+  float lrf = (float)atof(arg_of(argc, argv, "--lrf", "0.01").c_str());
+  float momentum = (float)atof(arg_of(argc, argv, "--momentum", "0.937").c_str());
+  float warm_mom = (float)atof(arg_of(argc, argv, "--warmup-momentum", "0.8").c_str());
+  float wd = (float)atof(arg_of(argc, argv, "--weight-decay", "0.0005").c_str());
+  float ema_decay = (float)atof(arg_of(argc, argv, "--ema-decay", "0.9999").c_str());
+  float close_mosaic = (float)atof(arg_of(argc, argv, "--close-mosaic", "0.1").c_str());
   uint64_t seed = strtoull(arg_of(argc, argv, "--seed", "1234").c_str(), nullptr, 10);
+  bool cos_lr = has_flag(argc, argv, "--cos-lr");
+  bool no_aug = has_flag(argc, argv, "--no-aug");
+  bool no_ema = has_flag(argc, argv, "--no-ema");
   bool dump_loss = has_flag(argc, argv, "--dump-loss");
+
+  det::AugCfg aug;
+  aug.mosaic = (float)atof(arg_of(argc, argv, "--mosaic", "1.0").c_str());
+  aug.fliplr = (float)atof(arg_of(argc, argv, "--fliplr", "0.5").c_str());
+  aug.degrees = (float)atof(arg_of(argc, argv, "--degrees", "5.0").c_str());
+  aug.translate = (float)atof(arg_of(argc, argv, "--translate", "0.15").c_str());
+  aug.scale = (float)atof(arg_of(argc, argv, "--scale", "0.6").c_str());
+  aug.hsv_h = (float)atof(arg_of(argc, argv, "--hsv-h", "0.015").c_str());
+  aug.hsv_s = (float)atof(arg_of(argc, argv, "--hsv-s", "0.6").c_str());
+  aug.hsv_v = (float)atof(arg_of(argc, argv, "--hsv-v", "0.4").c_str());
 
   if (data.empty()) { printf("jlpr train --model det: pass --data <dir with images/ and labels/>\n"); return 1; }
   std::vector<det::Item> items = det::read_yolo(data);
@@ -479,6 +571,15 @@ static int cmd_train_det(int argc, char** argv) {
   if (items.empty()) { printf("no images under %s/images\n", data.c_str()); return 1; }
   size_t nbox = 0;
   for (const det::Item& it : items) nbox += it.boxes.size();
+  const int per_epoch = std::max(1, (int)((items.size() + batch - 1) / batch));
+  if (epochs > 0) steps = epochs * per_epoch;
+  // Ultralytics warms up over 3 epochs, floored at 100 iterations; a short smoke run must not spend
+  // itself entirely in the warmup, so it is also capped at a fifth of the run.
+  int warmup = std::atoi(arg_of(argc, argv, "--warmup", "-1").c_str());
+  if (warmup < 0) warmup = std::min(std::max(100, 3 * per_epoch), std::max(1, steps / 5));
+  // close_mosaic: a fraction of the run (0.1 = the last tenth), or a step count if > 1.
+  const int mosaic_off_at = close_mosaic > 1.f ? steps - (int)close_mosaic
+                                              : steps - (int)(close_mosaic * steps);
 
   onx::Graph g = onx::load_onnx(onnx_in);
   det::HeadNames hn;
@@ -489,20 +590,158 @@ static int cmd_train_det(int argc, char** argv) {
     jl::graph_input_hw(g, iw, ih);
     imgsz = iw > 0 ? iw : 320;
   }
-  onx::Trainable t = onx::make_trainable(g);
-  if (!dump_loss) {
-    printf("%s: %zu trainable tensors, %zu parameters\n", onnx_in.c_str(), t.params.size(),
-           onx::param_count(t));
-    printf("heads: box %s ... (%zu levels), cls %s ...\n", hn.box[0].c_str(), hn.box.size(),
-           hn.cls[0].c_str());
-    printf("data: %zu images, %zu boxes, imgsz %d, batch %d, %d steps, Adam lr %g\n", items.size(),
-           nbox, imgsz, batch, steps, lr);
+  // Only the six head convs feed the loss, so only the subgraph behind them holds parameters:
+  // the DFL projection and the decode tail must stay exactly as exported (see weight_initializers).
+  std::set<std::string> needed(hn.box.begin(), hn.box.end());
+  needed.insert(hn.cls.begin(), hn.cls.end());
+  onx::Trainable t = onx::make_trainable(g, false, needed);
+
+  // --freeze N: hold the first N `model.<i>.` modules still, the same way Ultralytics' --freeze does.
+  // The tensors stay in the graph (and in write_back); they just leave the optimiser.
+  std::vector<Tensor> opt_params;
+  int frozen = 0;
+  for (size_t i = 0; i < t.params.size(); ++i) {
+    bool hold = false;
+    if (freeze > 0) {
+      const std::string& n = t.param_names[i];
+      if (n.rfind("model.", 0) == 0) {
+        const size_t dot = n.find('.', 6);
+        const int mod = std::atoi(n.substr(6, dot - 6).c_str());
+        hold = mod < freeze;
+      }
+    }
+    if (hold) ++frozen; else opt_params.push_back(t.params[i]);
   }
 
-  Adam opt(t.params, lr);
+  if (!dump_loss) {
+    printf("%s: %zu trainable tensors (%d frozen), %zu parameters\n", onnx_in.c_str(),
+           t.params.size(), frozen, onx::param_count(t));
+    printf("heads: box %s ... (%zu levels), cls %s ...\n", hn.box[0].c_str(), hn.box.size(),
+           hn.cls[0].c_str());
+    printf("data: %zu images, %zu boxes, imgsz %d, batch %d (%d/epoch), %d steps%s\n", items.size(),
+           nbox, imgsz, batch, per_epoch, steps, epochs > 0 ? " (from --epochs)" : "");
+    printf("optim: %s lr %g -> %g (%s), warmup %d, momentum %g, wd %g, EMA %s\n", optim.c_str(), lr0,
+           lr0 * lrf, cos_lr ? "cosine" : "linear", warmup, momentum, wd, no_ema ? "off" : "on");
+    printf("aug: %s\n", no_aug ? "off (--no-aug)" : "mosaic/flip/hsv/affine, mosaic closes at step "
+                                                    "(see --close-mosaic)");
+  }
+
+  // --check-aug: does the augmentation move the boxes with the pixels? Build augmented batches and
+  // run the *already trained* detector over them: if the affine/mosaic/flip maths were wrong, the
+  // labels would no longer sit on the plates and the recall would collapse. Cheap, and it tests the
+  // one thing a loss-parity test cannot see (the loss happily trains on wrong boxes).
+  int check_aug = std::atoi(arg_of(argc, argv, "--check-aug", "0").c_str());
+  if (check_aug > 0) {
+    jl::DetCfg ccfg;
+    ccfg.kind = jl::DetKind::V8;
+    ccfg.nc = 1;
+    ccfg.plate_class = 0;
+    ccfg.imgsz = imgsz;
+    ccfg.conf = 0.25f;
+    ccfg.nms = 0.45f;
+    ccfg.v8_fmt = (arg_of(argc, argv, "--fmt", "cxcywh") == "xyxy") ? BoxFmt::XYXY : BoxFmt::CXCYWH;
+    for (int pass = 0; pass < 2; ++pass) {              // 0 = plain resize, 1 = augmented
+      Rng crng(seed);
+      int gt_n = 0, hit = 0;
+      double iou_sum = 0;
+      for (int k = 0; k < check_aug; ++k) {
+        std::vector<int> idx;
+        for (int b = 0; b < batch; ++b) idx.push_back((int)crng.below((uint64_t)items.size()));
+        det::Batch ba = pass ? det::make_batch_aug(items, idx, imgsz, crng, aug, true)
+                             : det::make_batch(items, idx, imgsz);
+        for (int b = 0; b < batch; ++b) {
+          std::vector<unsigned char> rgb((size_t)imgsz * imgsz * 3);
+          for (int c = 0; c < 3; ++c)
+            for (int y = 0; y < imgsz; ++y)
+              for (int x = 0; x < imgsz; ++x)
+                rgb[((size_t)y * imgsz + x) * 3 + c] = (unsigned char)std::lround(
+                    255.f * ba.x->data[((size_t)b * 3 + c) * imgsz * imgsz + (size_t)y * imgsz + x]);
+          std::vector<jl::Box> got = jl::detect_plates(g, rgb.data(), imgsz, imgsz, ccfg);
+          for (const auto& q : ba.gts[(size_t)b]) {
+            ++gt_n;
+            evd::GtBox gt{q[1], q[2], q[3], q[4], 0};
+            float best = 0;
+            for (const jl::Box& d : got) best = std::max(best, evd::iou_xyxy(gt, {d.x1, d.y1, d.x2, d.y2, d.score}));
+            iou_sum += best;
+            if (best >= 0.5f) ++hit;
+          }
+        }
+      }
+      printf("check-aug [%s]: %d labels, the shipped detector finds %.1f%% of them (mean best IoU %.3f)\n",
+             pass ? "augmented" : "plain resize", gt_n, 100.0 * hit / std::max(1, gt_n),
+             iou_sum / std::max(1, gt_n));
+    }
+    return 0;
+  }
+
+  SGD sgd(opt_params, lr0, momentum, wd, true);
+  Adam adam(opt_params, lr0, 0.9f, 0.999f, 1e-8f, wd, true);
+  const bool use_sgd = optim != "adam";
+  Ema ema(t.params, ema_decay);
   Rng rng(seed);
   det::LossCfg cfg;
+
+  jl::DetCfg vcfg;                       // validation runs the product path: full graph + NMS
+  vcfg.kind = jl::DetKind::V8;
+  vcfg.nc = 1;
+  vcfg.plate_class = 0;
+  vcfg.imgsz = imgsz;
+  vcfg.conf = 0.001f;
+  vcfg.nms = 0.45f;
+  vcfg.v8_fmt = (arg_of(argc, argv, "--fmt", "cxcywh") == "xyxy") ? BoxFmt::XYXY : BoxFmt::CXCYWH;
+
+  std::map<std::string, std::vector<float>> best_snap;
+  float best_map = -1.f;
+  int best_step = 0;
+  auto snapshot = [&]() {
+    std::map<std::string, std::vector<float>> s;
+    for (const auto& kv : t.init) s[kv.first] = kv.second->data;
+    return s;
+  };
+  auto restore = [&](const std::map<std::string, std::vector<float>>& s) {
+    for (const auto& kv : s) {
+      auto it = t.init.find(kv.first);
+      if (it != t.init.end()) it->second->data = kv.second;
+    }
+  };
+  // Validation and export both want the EMA weights, not the live ones (measured everywhere in the
+  // YOLO literature; the live weights at step k are noisier than their average).
+  auto with_ema = [&](const std::function<void()>& fn) {
+    if (!no_ema) ema.swap();
+    fn();
+    if (!no_ema) ema.swap();
+  };
+  auto validate = [&](int step) {
+    if (valdir.empty()) return;
+    with_ema([&] {
+      onx::write_back(t);
+      DetEval e = eval_det_dir(t.g, vcfg, valdir, val_limit, 0.25f, 0.5f, false);
+      printf("  val @%d: mAP50 %.4f  mAP50-95 %.4f  P %.3f R %.3f  (%d gt over %zu frames)\n", step,
+             e.r.map50, e.r.map5095, e.r.precision, e.r.recall, e.n_gt, e.frames);
+      if (e.r.map5095 > best_map) {
+        best_map = e.r.map5095;
+        best_step = step;
+        best_snap = snapshot();          // inside with_ema: this saves the averaged weights
+        printf("    <- best\n");
+      }
+    });
+    fflush(stdout);
+  };
+
   for (int step = 0; step < steps; ++step) {
+    // schedule: linear warmup (momentum too, as Ultralytics does), then linear or cosine decay to
+    // lr0*lrf. Both are computed per step rather than per epoch because this trainer counts steps.
+    const float x = (float)step / (float)std::max(1, steps);
+    float lr = cos_lr ? lr0 * (lrf + (1 - lrf) * 0.5f * (1 + std::cos(3.14159265358979f * x)))
+                      : lr0 * ((1 - x) * (1 - lrf) + lrf);
+    float mom = momentum;
+    if (step < warmup) {
+      const float w = (float)(step + 1) / (float)warmup;
+      lr *= w;
+      mom = warm_mom + (momentum - warm_mom) * w;
+    }
+    sgd.lr = lr; sgd.momentum = mom; adam.lr = lr;
+
     // With fewer images than the batch size, every step sees all of them in order: that is the
     // "does this train at all" case, and a random sampler would hide the answer behind which images
     // the draw happened to pick (measured: batch 2 out of 8 frames swings the loss by 2x per step,
@@ -510,16 +749,16 @@ static int cmd_train_det(int argc, char** argv) {
     std::vector<int> idx;
     if ((int)items.size() <= batch) for (size_t i = 0; i < items.size(); ++i) idx.push_back((int)i);
     else for (int b = 0; b < batch; ++b) idx.push_back((int)rng.below((uint64_t)items.size()));
-    det::Batch ba = det::make_batch(items, idx, imgsz);
+    det::Batch ba = no_aug ? det::make_batch(items, idx, imgsz)
+                           : det::make_batch_aug(items, idx, imgsz, rng, aug, step < mosaic_off_at);
     det::LossOut rep;
     std::vector<Tensor> bxs, css;
     Tensor loss = det::forward_loss(t, hn, ba.x, ba.gts, imgsz, cfg, &rep, &bxs, &css);
-    opt.zero_grad();
+    if (use_sgd) sgd.zero_grad(); else adam.zero_grad();
     backward(loss);
-    opt.step();
     if (dump_loss) printf("%d %.6f %.6f %.6f %.6f\n", step, rep.total, rep.box, rep.cls, rep.dfl);
-    else printf("step %d: loss %.4f (box %.4f cls %.4f dfl %.4f) fg %d\n", step, rep.total, rep.box,
-                rep.cls, rep.dfl, rep.fg);
+    else printf("step %d: loss %.4f (box %.4f cls %.4f dfl %.4f) fg %d tss %.2f lr %.2e\n", step,
+                rep.total, rep.box, rep.cls, rep.dfl, rep.fg, rep.tss, lr);
     fflush(stdout);
     if (!fixture.empty() && step == 0) {
       // Step 0's head tensors, gts, loss and gradients — the input tools/parity/train_det.py hands
@@ -546,12 +785,27 @@ static int cmd_train_det(int argc, char** argv) {
         printf("wrote %s (head tensors, gts, loss and gradients of step 0)\n", fixture.c_str());
       }
     }
+    if (use_sgd) sgd.step(); else adam.step();
+    if (!no_ema) ema.update();
     free_graph(loss);
+    if (val_every > 0 && (step + 1) % val_every == 0) validate(step + 1);
+  }
+  if (!valdir.empty() && (val_every <= 0 || steps % val_every != 0)) validate(steps);   // final
+
+  if (!out_best.empty() && !best_snap.empty()) {
+    std::map<std::string, std::vector<float>> live = snapshot();
+    restore(best_snap);
+    onx::write_back(t);
+    onx::save_onnx(t.g, out_best);
+    printf("wrote %s (best val: mAP50-95 %.4f at step %d)\n", out_best.c_str(), best_map, best_step);
+    restore(live);
   }
   if (!out.empty()) {
-    onx::write_back(t);
-    onx::save_onnx(t.g, out);
-    printf("wrote %s\n", out.c_str());
+    with_ema([&] {
+      onx::write_back(t);
+      onx::save_onnx(t.g, out);
+    });
+    printf("wrote %s%s\n", out.c_str(), no_ema ? "" : " (EMA weights)");
   }
   return 0;
 }
@@ -863,11 +1117,9 @@ static int cmd_train(int argc, char** argv) {
 }
 
 
-// jlpr val — the C++ side of tools/eval_ocr.py: region top-1 on real crops, per-head + whole-plate on
-// generated ones. Same numbers, same fixed evaluation margin, so a model can be judged without
-// Python anywhere in the loop.
-// jlpr val --model det — the C++ side of tools/eval_det.py, plus the mAP that used to require
-// Ultralytics. Metrics and their two matchings live in pure/eval_det.hpp.
+// jlpr val --model det — the C++ side of tools/eval_det.py, plus the mAP that used to need
+// Ultralytics. The metrics and their two matchings live in pure/eval_det.hpp; the work is in
+// eval_det_dir() above, which the trainer's in-run validation calls too.
 static int cmd_val_det(int argc, char** argv) {
   std::string data = arg_of(argc, argv, "--data", "");
   std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_v8n_320.onnx");
@@ -892,97 +1144,64 @@ static int cmd_val_det(int argc, char** argv) {
   cfg.v8_fmt = (arg_of(argc, argv, "--fmt", "cxcywh") == "xyxy") ? BoxFmt::XYXY : BoxFmt::CXCYWH;
 
   onx::Graph det = onx::load_onnx(det_p);
-  std::vector<std::string> files;
-  trn::list_images_recursive(data + "/images", files);
-  std::sort(files.begin(), files.end());
-  if (limit > 0 && (int)files.size() > limit) files.resize((size_t)limit);
-  if (files.empty()) { printf("no images under %s/images\n", data.c_str()); return 1; }
-
-  const std::vector<float> thr = evd::iou_thresholds();
-  std::vector<evd::Scored> all;
-  std::vector<int> tp_b(evd::buckets().size(), 0), gt_b(evd::buckets().size(), 0);
-  int n_gt = 0, n_det_at_conf = 0, fp_bucket = 0, empty_frames = 0, fp_empty = 0;
-  for (size_t k = 0; k < files.size(); ++k) {
-    int W = 0, H = 0, C = 0;
-    std::vector<unsigned char> blob = trn::read_file(files[k]);
-    unsigned char* im = blob.empty() ? nullptr
-                                     : stbi_load_from_memory(blob.data(), (int)blob.size(), &W, &H, &C, 3);
-    if (!im) { printf("cannot read %s\n", files[k].c_str()); continue; }
-    std::string stem = files[k].substr(files[k].find_last_of("/\\") + 1);
-    stem = stem.substr(0, stem.find_last_of('.'));
-    std::vector<evd::GtBox> gts;
-    {
-      std::vector<unsigned char> lb = trn::read_file(data + "/labels/" + stem + ".txt");
-      std::istringstream ss(std::string(lb.begin(), lb.end()));
-      std::string line;
-      while (std::getline(ss, line)) {
-        std::istringstream ls(line);
-        int c; float xc, yc, w, h;
-        if (!(ls >> c >> xc >> yc >> w >> h)) continue;
-        if (w <= 0 || h <= 0) continue;
-        gts.push_back({(xc - w / 2) * W, (yc - h / 2) * H, (xc + w / 2) * W, (yc + h / 2) * H, w});
-      }
-    }
-    std::vector<jl::Box> boxes = jl::detect_plates(det, im, W, H, cfg);
-    stbi_image_free(im);
-    std::vector<evd::DetBox> dets, strong;
-    for (const jl::Box& b : boxes) {
-      dets.push_back({b.x1, b.y1, b.x2, b.y2, b.score});
-      if (b.score >= conf) strong.push_back(dets.back());
-    }
-    n_gt += (int)gts.size();
-    n_det_at_conf += (int)strong.size();
-    if (gts.empty()) { ++empty_frames; fp_empty += (int)strong.size(); }
-    evd::match_frame(dets, gts, thr, all);                 // confidence-ranked, for mAP
-    evd::bucket_match(strong, gts, iou_thr, tp_b, gt_b, fp_bucket);   // per-gt best IoU, for the table
-    if (!as_json && (k + 1) % 100 == 0) { printf("  %zu/%zu\n", k + 1, files.size()); fflush(stdout); }
-  }
-  evd::Report r = evd::summarize(all, n_gt, conf);
+  DetEval e = eval_det_dir(det, cfg, data, limit, conf, iou_thr, !as_json);
+  if (e.frames == 0) { printf("no images under %s/images\n", data.c_str()); return 1; }
+  const evd::Report& r = e.r;
   if (as_json) {
     printf("{\"frames\":%zu,\"gt\":%d,\"map50\":%.6f,\"map50_95\":%.6f,\"precision\":%.6f,"
            "\"recall\":%.6f,\"f1\":%.6f,\"tp\":%d,\"fp\":%d,\"buckets\":[",
-           files.size(), n_gt, r.map50, r.map5095, r.precision, r.recall, r.f1, r.tp, r.fp);
-    for (size_t b = 0; b < gt_b.size(); ++b)
+           e.frames, e.n_gt, r.map50, r.map5095, r.precision, r.recall, r.f1, r.tp, r.fp);
+    for (size_t b = 0; b < e.gt_b.size(); ++b)
       printf("%s{\"lo\":%.2f,\"hi\":%.2f,\"gt\":%d,\"found\":%d}", b ? "," : "", evd::buckets()[b][0],
-             evd::buckets()[b][1], gt_b[b], tp_b[b]);
-    printf("],\"bucket_fp\":%d,\"empty_frames\":%d,\"fp_on_empty\":%d}\n", fp_bucket, empty_frames, fp_empty);
+             evd::buckets()[b][1], e.gt_b[b], e.tp_b[b]);
+    printf("],\"bucket_fp\":%d,\"empty_frames\":%d,\"fp_on_empty\":%d}\n", e.fp_bucket, e.empty_frames,
+           e.fp_empty);
     return 0;
   }
-  printf("\n%zu frames, conf>=%.2f, IoU>=%.2f, model=%s\n", files.size(), conf, iou_thr,
-         det_p.c_str());
+  printf("\n%zu frames, conf>=%.2f, IoU>=%.2f, model=%s\n", e.frames, conf, iou_thr, det_p.c_str());
   printf("%-16s %8s %8s %8s\n", "plate share", "GT", "found", "recall");
-  for (size_t b = 0; b < gt_b.size(); ++b) {
-    if (!gt_b[b]) continue;
+  for (size_t b = 0; b < e.gt_b.size(); ++b) {
+    if (!e.gt_b[b]) continue;
     char name[32];
     snprintf(name, sizeof name, "%.0f-%.0f%%", evd::buckets()[b][0] * 100,
              std::min(1.f, evd::buckets()[b][1]) * 100);
-    printf("%-16s %8d %8d %7.1f%%\n", name, gt_b[b], tp_b[b], 100.0 * tp_b[b] / gt_b[b]);
+    printf("%-16s %8d %8d %7.1f%%\n", name, e.gt_b[b], e.tp_b[b], 100.0 * e.tp_b[b] / e.gt_b[b]);
   }
   int tot_g = 0, tot_t = 0;
-  for (size_t b = 0; b < gt_b.size(); ++b) { tot_g += gt_b[b]; tot_t += tp_b[b]; }
+  for (size_t b = 0; b < e.gt_b.size(); ++b) { tot_g += e.gt_b[b]; tot_t += e.tp_b[b]; }
   printf("%-16s %8d %8d %7.1f%%\n", "all", tot_g, tot_t, 100.0 * tot_t / std::max(1, tot_g));
-  printf("false positives: %d (of %d detections); on the %d plate-free frames: %d\n", fp_bucket,
-         n_det_at_conf, empty_frames, fp_empty);
+  printf("false positives: %d (of %d detections); on the %d plate-free frames: %d\n", e.fp_bucket,
+         e.n_det_at_conf, e.empty_frames, e.fp_empty);
   printf("mAP50 %.4f  mAP50-95 %.4f   (P %.4f  R %.4f  F1 %.4f at conf %.2f, TP %d FP %d FN %d)\n",
          r.map50, r.map5095, r.precision, r.recall, r.f1, conf, r.tp, r.fp, r.fn);
   return 0;
 }
 
+// jlpr val — the C++ side of tools/eval_ocr.py: region top-1/top-3 on real crops, per-head and
+// whole-plate on generated ones. Same crops, same reading modes (1 crop / 6-crop TTA / rectified by
+// the corner net), same numbers — so a model can be judged with no Python anywhere in the loop.
 static int cmd_val(int argc, char** argv) {
   if (arg_of(argc, argv, "--model", "ocr") == "det") return cmd_val_det(argc, argv);
   std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v2.onnx");
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string data = arg_of(argc, argv, "--data", "");
   std::string kind = arg_of(argc, argv, "--kind", "alpr");
+  std::string corner_p = arg_of(argc, argv, "--corner", "");
   int limit = std::atoi(arg_of(argc, argv, "--limit", "0").c_str());
+  float margin = (float)atof(arg_of(argc, argv, "--margin", "0.03").c_str());
+  bool tta = has_flag(argc, argv, "--tta");
   bool holdout = has_flag(argc, argv, "--holdout");
   if (data.empty()) {
-    printf("usage: jlpr val --data <dir> [--kind alpr|synth] [--ocr onnx] [--limit N] [--holdout]\n");
+    printf("usage: jlpr val --data <dir> [--kind alpr|synth] [--ocr onnx] [--corner onnx] [--tta] "
+           "[--margin f] [--limit N] [--holdout]\n");
     return 1;
   }
   spec::Spec sp = spec::load(spec_p);
   onx::Graph g = onx::load_onnx(ocr_p);
-  onx::Trainable t = onx::make_trainable(g);        // reuse: gives persistent params + head names
+  onx::Graph corner;
+  const bool use_corner = !corner_p.empty();
+  if (use_corner) corner = onx::load_onnx(corner_p);
+  std::vector<std::string> heads = jl::ocr_head_names(g);
 
   std::vector<trn::Item> items = (kind == "synth") ? trn::read_synth(data, true)
                                                   : trn::read_alpr(data, sp);
@@ -996,42 +1215,337 @@ static int cmd_val(int argc, char** argv) {
   }
   if (limit > 0 && (int)idxs.size() > limit) idxs.resize((size_t)limit);
 
-  size_t nheads = t.heads.size();
-  std::vector<int> per_head(nheads, 0);
-  int n = 0, full_ok = 0;
-  double conf_sum = 0;
+  const size_t nheads = heads.size();
+  std::vector<int> per_head(nheads, 0), per_head_n(nheads, 0);
+  std::map<std::string, std::array<int, 2>> by_cat;     // category -> {crops, region correct}
+  int n = 0, full_ok = 0, top3 = 0, legible_n = 0, legible_full = 0;
+  double conf_sum = 0, conf_right = 0;
+  const std::vector<float> one_margin = {margin};
   for (int id : idxs) {
     const trn::Item& it = items[(size_t)id];
-    std::vector<float> v = trn::load_input(it, trn::EVAL_MARGIN);
-    Tensor x = from_data({1, 3, 128, 128}, v);
-    auto vals = onx::run_onnx(g, x);
+    int W = 0, H = 0, C = 0;
+    std::vector<unsigned char> blob = trn::read_file(it.path);
+    unsigned char* im = blob.empty() ? nullptr
+                                     : stbi_load_from_memory(blob.data(), (int)blob.size(), &W, &H, &C, 3);
+    if (!im) continue;
+    // The file *is* the plate crop unless the generator recorded a box for it.
+    jl::Box box{0.f, 0.f, (float)W, (float)H, 1.f};
+    if (it.have_box) { box.x1 = it.bx0; box.y1 = it.by0; box.x2 = it.bx1; box.y2 = it.by1; }
+    jl::Read rd;
+    bool warped = false;
+    if (use_corner) {
+      float c[8];
+      jl::CornerCfg ccfg;
+      if (jl::predict_corners(corner, im, W, H, box, ccfg, c)) {
+        rd = jl::read_plate_warped(g, sp, im, W, H, c, ccfg);
+        warped = true;
+      }
+    }
+    if (!warped)
+      rd = jl::read_plate(g, sp, im, W, H, box.x1, box.y1, box.x2, box.y2,
+                          tta ? jl::default_margins() : one_margin);
+    stbi_image_free(im);
+
     bool all = true;
-    for (size_t h = 0; h < nheads; ++h) {
-      const std::vector<float>& p = vals.at(t.heads[h])->data;
-      int best = 0;
-      double tot = 0;
-      for (size_t i = 0; i < p.size(); ++i) { tot += p[i]; if (p[i] > p[best]) best = (int)i; }
-      bool ok = (it.mask[h] > 0.5f) ? (best == it.heads[h]) : true;
-      if (it.mask[h] > 0.5f) per_head[h] += ok ? 1 : 0;
-      if (h < 9 && it.mask[h] > 0.5f) all = all && ok;
-      if (h == 0) conf_sum += tot > 0 ? p[best] / tot : 0;
+    for (size_t h = 0; h < nheads && h < it.heads.size(); ++h) {
+      if (it.mask[h] <= 0.5f) continue;
+      ++per_head_n[h];
+      const bool ok = rd.arg[h] == it.heads[h];
+      per_head[h] += ok ? 1 : 0;
+      if (h < 9) all = all && ok;
+    }
+    if (!rd.probs.empty()) {
+      // region top-3: the same "is the right name even in the running" question eval_ocr.py asks
+      const std::vector<float>& p = rd.probs[0];
+      int r1 = 0, r2 = -1, r3 = -1;
+      for (size_t i = 1; i < p.size(); ++i) if (p[i] > p[(size_t)r1]) r1 = (int)i;
+      for (size_t i = 0; i < p.size(); ++i) {
+        if ((int)i == r1) continue;
+        if (r2 < 0 || p[i] > p[(size_t)r2]) { r3 = r2; r2 = (int)i; }
+        else if (r3 < 0 || p[i] > p[(size_t)r3]) r3 = (int)i;
+      }
+      conf_sum += p[(size_t)r1];
+      if (it.mask[0] > 0.5f) {
+        const int want = it.heads[0];
+        if (want == r1) { conf_right += p[(size_t)r1]; }
+        if (want == r1 || want == r2 || want == r3) ++top3;
+      }
     }
     full_ok += all ? 1 : 0;
+    if (it.heads.size() > 10 && it.mask[10] > 0.5f && it.heads[10] == 1) {   // labelled legible
+      ++legible_n;
+      legible_full += all ? 1 : 0;
+    }
+    if (kind == "alpr" && !it.key.empty()) {
+      const std::string cat = it.key.substr(0, it.key.find('/'));
+      std::array<int, 2>& c = by_cat[cat];
+      c[0] += 1;
+      c[1] += (it.mask[0] > 0.5f && rd.arg[0] == it.heads[0]) ? 1 : 0;
+    }
     ++n;
     if (n % 200 == 0) { printf("  %d/%zu\n", n, idxs.size()); fflush(stdout); }
   }
-  printf("\n%s: %d crops from %s (margin %.2f, no TTA)\n", ocr_p.c_str(), n, data.c_str(),
-         trn::EVAL_MARGIN);
+
+  const char* mode = use_corner ? "corner-rectified" : (tta ? "6-crop TTA" : "1 crop");
+  printf("\n%s: %d crops from %s (%s, margin %.2f)\n", ocr_p.c_str(), n, data.c_str(), mode, margin);
   if (kind == "alpr") {
-    printf("region top1 %.1f%%   mean region confidence %.3f%s\n", 100.0 * per_head[0] / std::max(1, n),
-           conf_sum / std::max(1, n), holdout ? "   (hold-out split)" : "");
+    printf("region top1 %.1f%%   top3 %.1f%%   mean conf %.3f (correct only %.3f)%s\n",
+           100.0 * per_head[0] / std::max(1, per_head_n[0]), 100.0 * top3 / std::max(1, n),
+           conf_sum / std::max(1, n), conf_right / std::max(1, per_head[0]),
+           holdout ? "   (hold-out split)" : "");
+    for (const auto& kv : by_cat)
+      printf("  %-16s %5d crops  top1 %5.1f%%\n", kv.first.c_str(), kv.second[0],
+             100.0 * kv.second[1] / std::max(1, kv.second[0]));
   } else {
-    printf("whole plate %.1f%%\n", 100.0 * full_ok / std::max(1, n));
-    printf("per head:");
+    printf("whole plate %.1f%%", 100.0 * full_ok / std::max(1, n));
+    if (legible_n) printf("   (legible only %.1f%% of %d)", 100.0 * legible_full / legible_n, legible_n);
+    printf("\nper head:");
     for (size_t h = 0; h < nheads && h < 9; ++h)
-      printf(" %s %.0f%%", t.heads[h].substr(0, 6).c_str(), 100.0 * per_head[h] / std::max(1, n));
+      printf(" %s %.0f%%", heads[h].substr(0, 6).c_str(),
+             100.0 * per_head[h] / std::max(1, per_head_n[h]));
     printf("\n");
   }
+  return 0;
+}
+
+// jlpr pseudo-label — the C++ side of tools/pseudo_label.py: label real photos with an existing
+// detector so the synthetic set gets some real backgrounds to sit on.
+//
+// Why it exists: our composites paste plates onto whatever we have, so a detector trained on them is
+// strong at close-ups and weak at 5% of the frame, and the borrowed PlateYOLO-JP is the mirror image.
+// It is a good teacher exactly where we are bad. The labels are only as good as the teacher, which is
+// why the output is *mixed with* synthetic data rather than used alone.
+static int cmd_pseudo_label(int argc, char** argv) {
+  std::string src = arg_of(argc, argv, "--src", "");
+  std::string out = arg_of(argc, argv, "--out", "");
+  std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_pyj320.onnx");
+  int imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "640").c_str());
+  int limit = std::atoi(arg_of(argc, argv, "--limit", "0").c_str());
+  float conf = (float)atof(arg_of(argc, argv, "--conf", "0.5").c_str());
+  bool keep_empty = has_flag(argc, argv, "--keep-empty");
+  if (src.empty() || out.empty()) {
+    printf("usage: jlpr pseudo-label --src <dir of photos> --out <yolo dir> [--det onnx] "
+           "[--fmt xyxy|cxcywh] [--imgsz N] [--conf f] [--limit N] [--keep-empty]\n");
+    return 1;
+  }
+  jl::DetCfg cfg;
+  cfg.kind = jl::DetKind::V8;
+  cfg.nc = 1;
+  cfg.plate_class = 0;
+  cfg.imgsz = std::atoi(arg_of(argc, argv, "--det-imgsz", "0").c_str());
+  cfg.conf = conf;
+  cfg.nms = 0.45f;
+  cfg.v8_fmt = (arg_of(argc, argv, "--fmt", "xyxy") == "cxcywh") ? BoxFmt::CXCYWH : BoxFmt::XYXY;
+
+  std::vector<std::string> files;
+  trn::list_images_recursive(src, files);
+  std::sort(files.begin(), files.end());
+  if (limit > 0 && (int)files.size() > limit) files.resize((size_t)limit);
+  if (files.empty()) { printf("no images under %s\n", src.c_str()); return 1; }
+  make_dir(out + "/images");
+  make_dir(out + "/labels");
+  onx::Graph det = onx::load_onnx(det_p);
+
+  int kept = 0, boxes_total = 0, empty = 0;
+  for (size_t n = 0; n < files.size(); ++n) {
+    int W = 0, H = 0, C = 0;
+    std::vector<unsigned char> blob = trn::read_file(files[n]);
+    unsigned char* im = blob.empty() ? nullptr
+                                     : stbi_load_from_memory(blob.data(), (int)blob.size(), &W, &H, &C, 3);
+    if (!im) continue;
+    std::vector<jl::Box> boxes = jl::detect_plates(det, im, W, H, cfg);
+    if (boxes.empty() && !keep_empty) { ++empty; stbi_image_free(im); continue; }
+    char name[64];
+    snprintf(name, sizeof name, "real%05d", kept);
+    // The frame is written at --imgsz so the normalised labels stay valid whatever the source size.
+    Tensor sized = jl::resize_rgb01(im, W, H, imgsz, imgsz);
+    stbi_image_free(im);
+    std::vector<unsigned char> pix((size_t)imgsz * imgsz * 3);
+    for (int y = 0; y < imgsz; ++y)
+      for (int x = 0; x < imgsz; ++x)
+        for (int c = 0; c < 3; ++c)
+          pix[((size_t)y * imgsz + x) * 3 + c] = (unsigned char)std::lround(
+              255.f * std::min(1.f, std::max(0.f, sized->data[((size_t)c * imgsz + y) * imgsz + x])));
+    stbi_write_png((out + "/images/" + name + ".png").c_str(), imgsz, imgsz, 3, pix.data(), imgsz * 3);
+    std::string lines;
+    for (const jl::Box& b : boxes) {
+      char buf[128];
+      snprintf(buf, sizeof buf, "0 %.6f %.6f %.6f %.6f\n", (b.x1 + b.x2) * 0.5f / W,
+               (b.y1 + b.y2) * 0.5f / H, (b.x2 - b.x1) / W, (b.y2 - b.y1) / H);
+      lines += buf;
+      ++boxes_total;
+    }
+    trn::write_file(out + "/labels/" + name + ".txt", lines.data(), lines.size());
+    ++kept;
+    if ((n + 1) % 100 == 0) {
+      printf("  %zu/%zu  kept %d  boxes %d  empty %d\n", n + 1, files.size(), kept, boxes_total, empty);
+      fflush(stdout);
+    }
+  }
+  printf("\nwrote %d images and %d boxes into %s (skipped %d with no confident detection)\n", kept,
+         boxes_total, out.c_str(), empty);
+  printf("teacher: %s at conf>=%.2f — these labels are only as good as that model, which is why they\n"
+         "are mixed with synthetic data rather than used alone.\n", det_p.c_str(), conf);
+  return 0;
+}
+
+// jlpr check-regions — the C++ side of tools/check_regions.py: can the recogniser name every region
+// on the list at all? Renders come from `jlpr gen --region sweep`, so this is an easy test (same
+// fonts as training); it answers "is this class reachable", not "how good is it in the wild".
+static int cmd_check_regions(int argc, char** argv) {
+  std::string data = arg_of(argc, argv, "--data", "");
+  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v2.onnx");
+  std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
+  std::string alpr = arg_of(argc, argv, "--alpr", "");    // which names real data covers
+  int limit = std::atoi(arg_of(argc, argv, "--limit", "0").c_str());
+  bool tta = has_flag(argc, argv, "--tta");
+  if (data.empty()) {
+    printf("usage: jlpr check-regions --data <dir from `jlpr gen --region sweep`> [--ocr onnx] "
+           "[--alpr <root>] [--tta] [--limit N]\n");
+    return 1;
+  }
+  spec::Spec sp = spec::load(spec_p);
+  onx::Graph g = onx::load_onnx(ocr_p);
+  std::vector<trn::Item> items = trn::read_synth(data, true);
+  if (items.empty()) { printf("no labelled crops under %s\n", data.c_str()); return 1; }
+  if (limit > 0 && (int)items.size() > limit) items.resize((size_t)limit);
+
+  std::set<int> covered;                                  // region ids real data has examples of
+  if (!alpr.empty())
+    for (const trn::Item& it : trn::read_alpr(alpr, sp)) covered.insert(it.heads[0]);
+
+  const spec::Group& reg = sp.head("region");
+  std::vector<int> seen(reg.n, 0), ok(reg.n, 0);
+  const std::vector<float> one = {0.03f};
+  for (const trn::Item& it : items) {
+    int W = 0, H = 0, C = 0;
+    std::vector<unsigned char> blob = trn::read_file(it.path);
+    unsigned char* im = blob.empty() ? nullptr
+                                     : stbi_load_from_memory(blob.data(), (int)blob.size(), &W, &H, &C, 3);
+    if (!im) continue;
+    float x0 = 0, y0 = 0, x1 = (float)W, y1 = (float)H;
+    if (it.have_box) { x0 = it.bx0; y0 = it.by0; x1 = it.bx1; y1 = it.by1; }
+    jl::Read rd = jl::read_plate(g, sp, im, W, H, x0, y0, x1, y1,
+                                 tta ? jl::default_margins() : one);
+    stbi_image_free(im);
+    const int want = it.heads[0];
+    if (want < 0 || want >= reg.n) continue;
+    ++seen[(size_t)want];
+    if (rd.arg[0] == want) ++ok[(size_t)want];
+  }
+  int tot = 0, hit = 0, new_tot = 0, new_hit = 0, cov_tot = 0, cov_hit = 0, unc_tot = 0, unc_hit = 0;
+  std::vector<std::string> misses;
+  for (int r = 0; r < reg.n; ++r) {
+    if (!seen[(size_t)r]) continue;
+    tot += seen[(size_t)r];
+    hit += ok[(size_t)r];
+    // the five names added in 2025 sit at the end of spec/labels.txt (133..137 in the 138-name list)
+    const bool is_new = r >= reg.n - 5;
+    if (is_new) { new_tot += seen[(size_t)r]; new_hit += ok[(size_t)r]; }
+    if (!alpr.empty()) {
+      if (covered.count(r)) { cov_tot += seen[(size_t)r]; cov_hit += ok[(size_t)r]; }
+      else { unc_tot += seen[(size_t)r]; unc_hit += ok[(size_t)r]; }
+    }
+    if (!ok[(size_t)r]) misses.push_back(reg.tok[(size_t)r]);
+  }
+  printf("\n%s on %d renders of %d region names (%s)\n", ocr_p.c_str(), tot,
+         (int)std::count_if(seen.begin(), seen.end(), [](int v) { return v > 0; }),
+         tta ? "6-crop TTA" : "1 crop");
+  printf("readable overall: %.1f%%\n", 100.0 * hit / std::max(1, tot));
+  if (new_tot) printf("  2025 additions (last 5 names): %d/%d\n", new_hit, new_tot);
+  if (!alpr.empty()) {
+    printf("  names real data covers   : %.1f%% of %d\n", 100.0 * cov_hit / std::max(1, cov_tot), cov_tot);
+    printf("  names real data lacks    : %.1f%% of %d\n", 100.0 * unc_hit / std::max(1, unc_tot), unc_tot);
+  }
+  if (!misses.empty()) {
+    printf("never read correctly (%zu):", misses.size());
+    for (size_t i = 0; i < misses.size() && i < 40; ++i) printf(" %s", misses[i].c_str());
+    printf("%s\n", misses.size() > 40 ? " ..." : "");
+  }
+  return 0;
+}
+
+// jlpr context-test — the C++ side of tools/context_test.py: the same photo, only the size of the
+// window cut around the plate changes. This is the measurement that showed the borrowed detectors
+// only fire on plates that come with a car around them (0.83 at 8% of the frame, nothing past 30%),
+// and it is how a new detector's usable range gets stated in numbers instead of adjectives.
+static int cmd_context_test(int argc, char** argv) {
+  std::string img = arg_of(argc, argv, "--img", "");
+  std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_v8n_320.onnx");
+  std::string shares_s = arg_of(argc, argv, "--shares", "0.05,0.08,0.12,0.20,0.30,0.45,0.60,0.80,0.95");
+  float bx0 = (float)atof(arg_of(argc, argv, "--x1", "-1").c_str());
+  float by0 = (float)atof(arg_of(argc, argv, "--y1", "-1").c_str());
+  float bx1 = (float)atof(arg_of(argc, argv, "--x2", "-1").c_str());
+  float by1 = (float)atof(arg_of(argc, argv, "--y2", "-1").c_str());
+  float conf = (float)atof(arg_of(argc, argv, "--conf", "0.10").c_str());
+  if (img.empty()) {
+    printf("usage: jlpr context-test --img <file> [--det onnx] [--fmt xyxy|cxcywh] "
+           "[--x1 f --y1 f --x2 f --y2 f] [--shares a,b,c] [--conf f]\n"
+           "  without --x1..--y2 the plate is located by running the detector on the whole frame\n");
+    return 1;
+  }
+  jl::DetCfg cfg;
+  cfg.kind = jl::DetKind::V8;
+  cfg.nc = 1;
+  cfg.plate_class = 0;
+  cfg.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "0").c_str());
+  cfg.conf = conf;
+  cfg.nms = 0.45f;
+  // Box layout is declared, not sniffed — the trap this tool itself fell into once: reading cxcywh
+  // as xyxy puts a plausible-looking box in the wrong place and the run reports "no detections".
+  cfg.v8_fmt = (arg_of(argc, argv, "--fmt", "cxcywh") == "xyxy") ? BoxFmt::XYXY : BoxFmt::CXCYWH;
+
+  int W = 0, H = 0, C = 0;
+  std::vector<unsigned char> blob = trn::read_file(img);
+  unsigned char* im = blob.empty() ? nullptr
+                                   : stbi_load_from_memory(blob.data(), (int)blob.size(), &W, &H, &C, 3);
+  if (!im) { printf("cannot read %s\n", img.c_str()); return 1; }
+  onx::Graph det = onx::load_onnx(det_p);
+  if (bx0 < 0) {
+    std::vector<jl::Box> b = jl::detect_plates(det, im, W, H, cfg);
+    if (b.empty()) { printf("no plate found in the full frame; pass --x1..--y2 to say where it is\n"); return 1; }
+    bx0 = b[0].x1; by0 = b[0].y1; bx1 = b[0].x2; by1 = b[0].y2;
+    printf("plate located at (%.0f,%.0f)-(%.0f,%.0f), det %.2f\n", bx0, by0, bx1, by1, b[0].score);
+  }
+  const float pcx = (bx0 + bx1) / 2, pcy = (by0 + by1) / 2, pw = bx1 - bx0;
+  std::vector<float> shares;
+  {
+    std::stringstream ss(shares_s);
+    std::string tok;
+    while (std::getline(ss, tok, ',')) if (!tok.empty()) shares.push_back((float)atof(tok.c_str()));
+  }
+  // The window is 4:3 and is always resampled to 640x480, exactly as tools/context_test.py does:
+  // the detector must see the same framing at every share, or the sweep measures the resize instead
+  // of the context.
+  const int out_w = std::atoi(arg_of(argc, argv, "--out-w", "640").c_str());
+  const int out_h = (int)std::lround(out_w * 3.0 / 4.0);
+  printf("%-12s %-14s %8s %6s\n", "plate share", "plate px @out", "det", "IoU");
+  for (float sh : shares) {
+    const float win_w = pw / std::max(0.01f, sh), win_h = win_w * 3.f / 4.f;
+    const float x0 = pcx - win_w / 2, y0 = pcy - win_h / 2;
+    std::vector<unsigned char> crop((size_t)out_w * out_h * 3, 114);
+    for (int y = 0; y < out_h; ++y)
+      for (int x = 0; x < out_w; ++x) {
+        const float sx = x0 + (x + 0.5f) * (win_w / out_w) - 0.5f;
+        const float sy = y0 + (y + 0.5f) * (win_h / out_h) - 0.5f;
+        for (int c = 0; c < 3; ++c)
+          crop[((size_t)y * out_w + x) * 3 + c] =
+              (unsigned char)std::lround(std::min(255.f, std::max(0.f, det::bl_sample(im, W, H, sx, sy, c))));
+      }
+    std::vector<jl::Box> got = jl::detect_plates(det, crop.data(), out_w, out_h, cfg);
+    const float sx = out_w / win_w, sy = out_h / win_h;
+    evd::GtBox want{(bx0 - x0) * sx, (by0 - y0) * sy, (bx1 - x0) * sx, (by1 - y0) * sy, sh};
+    float best = 0, best_iou = 0;
+    for (const jl::Box& d : got) {
+      const float v = evd::iou_xyxy(want, {d.x1, d.y1, d.x2, d.y2, d.score});
+      if (v > best_iou) { best_iou = v; best = d.score; }
+    }
+    char det_s[16];
+    if (best_iou > 0.3f) snprintf(det_s, sizeof det_s, "%.2f", best);
+    else snprintf(det_s, sizeof det_s, "%s", "none");
+    printf("%-11.0f%% %-14.0f %8s %6.2f\n", sh * 100, want.x2 - want.x1, det_s, best_iou);
+  }
+  stbi_image_free(im);
   return 0;
 }
 
@@ -1283,6 +1797,9 @@ int main(int argc, char** argv) {
   if (cmd == "gen-det") return cmd_gen_det(argc, argv);
   if (cmd == "train") return cmd_train(argc, argv);
   if (cmd == "val") return cmd_val(argc, argv);
+  if (cmd == "pseudo-label") return cmd_pseudo_label(argc, argv);
+  if (cmd == "check-regions") return cmd_check_regions(argc, argv);
+  if (cmd == "context-test") return cmd_context_test(argc, argv);
   printf("jlpr: '%s' is not implemented yet\n", cmd.c_str());
   return 1;
 }

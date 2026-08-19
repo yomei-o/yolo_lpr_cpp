@@ -39,6 +39,34 @@ struct SGD {
   }
 };
 
+// Exponential moving average of the weights, as Ultralytics keeps one for every detector run. The
+// decay ramps in (`d = decay * (1 - exp(-updates/tau))`) so the first steps are not averaged against
+// a random initialisation. Measured everywhere in the YOLO literature: the EMA copy is the one worth
+// exporting, and `swap()` is how it gets written out without disturbing the live weights.
+struct Ema {
+  std::vector<Tensor> params;
+  std::vector<std::vector<float>> shadow;
+  float decay, tau;
+  int updates = 0;
+  Ema(std::vector<Tensor> p, float decay = 0.9999f, float tau = 2000.f)
+    : params(std::move(p)), decay(decay), tau(tau) {
+    for (const Tensor& q : params) shadow.push_back(q->data);
+  }
+  void update() {
+    ++updates;
+    const float d = decay * (1.f - std::exp(-(float)updates / tau));
+    for (size_t k = 0; k < params.size(); ++k) {
+      std::vector<float>& sh = shadow[k];
+      const std::vector<float>& w = params[k]->data;
+      for (size_t i = 0; i < sh.size(); ++i) sh[i] = d * sh[i] + (1.f - d) * w[i];
+    }
+  }
+  // Exchange live weights and the average, so the same call puts them back.
+  void swap() {
+    for (size_t k = 0; k < params.size(); ++k) std::swap(shadow[k], params[k]->data);
+  }
+};
+
 struct Adam {
   std::vector<Tensor> params; float lr, b1, b2, eps, wd; bool decoupled;   // decoupled = AdamW
   std::vector<std::vector<float>> m, v; int t = 0;
