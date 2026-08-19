@@ -178,6 +178,33 @@ head 追加は分岐の GAP 出力に Dense を足すだけなので、既存 ba
 - 規模の目安: 認識 20–40万枚、検出コンポジット 2–5万枚（実データはその 5% 程度）
 - 合成では **4隅・全head ラベルが正解付きで得られる**ので、2段目と3段目はここで作り込む
 
+### Kaggle の GPU で学習する（kbridge 経由）
+
+姉妹リポジトリ [kaggle_server_cpp](https://github.com/yomei-o/kaggle_server_cpp)（kbridge）で、Kaggle の
+無料 GPU をローカルの HTTP API として使える。Colab notebook を開かなくても、エージェントや `curl` から
+ビルド・生成・学習・回収まで通せる。長時間の学習は `/exec` ではなく `/job`（Kaggle 側で切り離して起動し、
+ログをファイルに落とす）を使う。
+
+```sh
+# ローカル: kbridge を起動して Kaggle セッションに繋ぐ（URL は Notebook の "VSCode Compatible URL"）
+./kbridge_server.exe --port 8787
+curl -s -X POST localhost:8787/session -d '{"url":"https://kkb-production.jupyter-proxy.kaggle.net/k/.../proxy"}'
+curl -s localhost:8787/gpu            # -> Tesla T4 x2, torch 2.10+cu128
+
+# Kaggle 側: 環境を作る（このリポを clone してビルド、フォントと実データを取る）
+curl -s -X POST localhost:8787/job -d '{"name":"prep","cmd":"cd /kaggle/working &&   git clone -q --depth 1 https://github.com/yomei-o/yolo_lpr_cpp.git && cd yolo_lpr_cpp &&   python tools/fetch_fonts.py --include-system &&   g++ -std=c++20 -O2 -fopenmp -Ipure -Ipure/third_party pure/jlpr.cpp -o jlpr &&   git clone -q --depth 1 https://github.com/dyama/alpr_jp.git ../alpr_jp &&   ./jlpr gen --out data/synth --count 30000 --seed 90210 --quiet"}'
+
+# 学習（GPU）。ログは何度でも増分で読める
+curl -s -X POST localhost:8787/job -d '{"name":"ocr","cmd":"cd /kaggle/working/yolo_lpr_cpp &&   python tools/train_ocr.py --synth data/synth --alpr ../alpr_jp --steps 4000 --batch 64   --workers 4 --export models/plate_ocr_v2.onnx"}'
+curl -s "localhost:8787/job/<id>/log?offset=0"
+
+# 成果物を回収
+curl -s "localhost:8787/download?path=yolo_lpr_cpp/models/plate_ocr_v2.onnx" -o models/plate_ocr_v2.onnx
+```
+
+Kaggle 側の実測（無料枠 T4×2 / 4 vCPU）: 合成生成 **0.06 秒/枚**（4 コア）、認識器の学習は GPU なら
+ローカル CPU の 50 倍以上速い。`--workers 4` を付けないと GPU が画像デコード待ちになる。
+
 ### 学習の段取り
 1. 合成のみで 3 モデルを事前学習（Colab T4 で検出 1.5–3h / 認識 1–2h / 4隅 30分 が目安）
 2. 認識器は既存 ONNX 重みからの転移 ＋ 実データ（alpr_jp 720枚 + 自前）で低 LR 微調整（head→backbone の段階解凍）
