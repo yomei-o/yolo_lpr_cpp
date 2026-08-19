@@ -4,6 +4,10 @@
 **依存ライブラリなしの C++**（MSVC / mingw / Emscripten）で、ブラウザ (WASM) デモまで含む。
 学習は Colab / Kaggle の無料枠で回せる範囲に収める（既存重みからのファインチューニング＋合成データ）。
 
+**設計の核: Python と C++ が対等。** データ生成・学習・推論・評価・ONNX 入出力のすべてを
+**両言語で実装し、同じ CLI・同じラベル定義・同じ数値**が出ることをテストで縛る。
+どちらか一方しかできない機能は作らない（詳細は下の「Python と C++ の対等性」）。
+
 姉妹リポジトリ: 検出エンジン [yolov8_cpp](https://github.com/yomei-o/yolov8_cpp) ／
 9-head 分類器 [lpr_cpp](https://github.com/yomei-o/lpr_cpp) ／ [yolox_cpp](https://github.com/yomei-o/yolox_cpp)。
 本リポジトリはこの2つを**製品として使える1本のパイプライン**にまとめ直すもの。
@@ -31,12 +35,30 @@
 
 | 論点 | 決定 | 理由 |
 |---|---|---|
-| 学習の実装 | **両輪（Python 主・C++ 従）** | 本番学習は Colab/Kaggle で PyTorch/Ultralytics（無料枠の時間効率が段違い）。C++ 側は同じデータで学習が回ることの検証と追加微調整に使う |
+| 学習の実装 | **Python と C++ の両方で対等に**（成果物・数値ともに一致させる） | ここが本リポの主眼。無料枠での長時間学習は速い方（Python/CUDA）で回してよいが、C++ 単独でも同じ学習・同じ ONNX 出力ができる状態を維持する |
 | モデル配布形式 | **ONNX（全3段）** | C++ / WASM 双方が同じファイルを直読み。姉妹リポの ONNX リーダを流用 |
 | 対応範囲 | 中型(330×165)・**大型(440×220)**・軽、白/黄/緑/黒、**地方版図柄入り** | 種別は3段目の head として明示的に出す。二輪・2段組みは初版対象外 |
 | 矯正段 | **入れる**（4隅回帰 → 透視変換） | 上記のとおり地域名 head の余白依存を根本から潰す |
 | 事前学習重み | **AGPL 許容**（Ultralytics `yolov8n.pt` から転移） | 少データ前提で検出精度が最優先。姉妹リポと同じ扱い |
 | 推論の依存 | なし（自前 ONNX ランナ＋stb） | MSVC / mingw / emcc の3系統で同一ソース。`-DUSE_EIGEN` で CPU 高速化 |
+
+## Python と C++ の対等性
+
+両言語に同じ機能を持たせ、**同じサブコマンド名**で叩けるようにする。片方だけの近道は作らない。
+
+| 機能 | Python (`tools/`) | C++ (`pure/`) | パリティの条件 |
+|---|---|---|---|
+| ラベル表（地名138/かな/分類番号/種別） | `labels.py` | `lpr_labels.hpp` | 1つの定義ファイル（`spec/labels.txt`）から**両方を生成**。突き合わせテストでバイト一致 |
+| 合成データ生成 | `gen.py` | `gen.cpp` | 同じ seed で**文字列・4隅・変換パラメータ・色・種別が完全一致**。画像はラスタライザ差（PIL/FreeType vs stb_truetype）が出るので、一致は幾何とラベルまでとし、画像は統計と目視で同等を確認 |
+| 学習（検出 / 4隅 / 認識） | PyTorch (+Ultralytics) | 自作 autograd（`yolov8_cpp`/`lpr_cpp` 由来） | 同じ初期重み・同じバッチ・同じ LR で **loss と勾配が 1e-4 以内**。小データ・数ステップで縛る |
+| 推論 | onnxruntime または自前 | 自前 ONNX ランナ | 同一画像で**同一文字列**、スコア差 1e-4 以内 |
+| 評価（mAP / 全文一致 / 色別内訳） | `eval.py` | `jlpr val` | 同じデータセットで**同じ数値**（mAP は 1e-3 以内） |
+| ONNX 出力 | `torch.onnx.export` | 自前エクスポータ | 出力 ONNX を相互に読み込んで **forward が 1e-5 以内** |
+| WASM | — | `emcc`（C++ 側の役目） | ブラウザで CLI と同じ文字列が出る |
+
+**速度は対等ではない**（そこは割り切る）。姉妹リポの実測で C++/CUDA 経路は COCO128/640/batch4 で
+約 4.6 分/epoch = 100 epoch なら約 8 時間、CPU なら 640px で丸一日規模。無料枠で本番学習を回すときは
+Python/CUDA が現実的で、C++ 側は**同じ結果に到達できることを小規模で証明し、追加学習にも使える**状態を保つ。
 
 ## モデル仕様
 
@@ -95,22 +117,28 @@ Python の生成器を書く。プレート**画像そのもの**と**車体に�
 
 目標値: 検出 mAP@0.5 ≥ 0.95（色別 recall も ≥ 0.90）、認識は**プレート全文一致 ≥ 95%**、region ≥ 98%（TTA なし）。
 
-## C++ 実装
+## 実装（同じ機能を2系統）
 
 ```
+spec/      labels.txt                地名/かな/分類番号/種別の唯一の定義（C++・Python 両方をここから生成）
+           pipeline.md               入出力・前処理・マージン・閾値の仕様（両実装が従う）
 pure/      onnx.hpp / onnx_run.hpp   ONNX リーダ＋実行（姉妹リポから移植、必要 op のみ）
+           onnx_export.hpp           学習した重み → ONNX（3モデル分）
+           autograd/…                自作 autograd・conv・BN・Adam（姉妹リポから移植）
            infer.hpp                 YOLOv8 decode(DFL)+NMS（nc 任意に一般化）
            warp.hpp                  4隅→透視変換→128×128
-           lpr_labels.hpp            地名138 + かな + 分類番号 + 種別のラベル表と decode
+           lpr_labels.hpp            ラベル表と decode（spec から生成）
            pipeline.hpp              detect → corner → warp → classify → 文字列＋信頼度
-           jlpr.cpp                  CLI（画像/ディレクトリ/連番）→ 注釈 PNG + JSON
+           gen.cpp                   合成データ生成（C++ 版）
+           jlpr.cpp                  CLI: gen / train / val / detect / export
+tools/     labels.py gen.py train_*.py eval.py export_*.py   同じサブコマンドの Python 版
+           parity/                   Python↔C++ の一致テスト（ラベル・生成・loss・推論・ONNX）
 models/    plate_det.onnx / plate_corner.onnx / plate_ocr.onnx
-tools/     生成器・データ整形・学習ノートブック（Python、学習時のみ）
 wasm/      ブラウザデモ（カメラ / ファイル入力、GitHub Pages）
 ```
-- ビルドは単一 TU、`cl /std:c++20 /O2` ／ `g++ -std=c++20 -O2` ／ `emcc -msimd128`。`-DUSE_EIGEN` で CPU 高速化
+- C++ ビルドは単一 TU、`cl /std:c++20 /O2` ／ `g++ -std=c++20 -O2` ／ `emcc -msimd128`。`-DUSE_EIGEN` で CPU 高速化、`-DUSE_CUDA` で GPU
+- CLI は両言語で揃える: `jlpr train --model ocr --data … --epochs …` ⇔ `python tools/train_ocr.py --data … --epochs …`（引数名も同じ）
 - WASM デモは 3 モデルを実行時 fetch。検出は 640 が重いので 416/512 の ONNX を併置し、ボタン押しで実行
-- C++ 従の学習パス（`lpr_cpp` の autograd 移植＋ weights→ONNX 出力）は本流が動いた後
 
 ## 既知の落とし穴（姉妹リポで実測済み。再発させない）
 
