@@ -81,7 +81,7 @@ const DETECTORS = {
   // ~10% of the frame (measured: bus photo, 320 -> nothing, 640 -> 0.41, borrowed -> 0.80).
   v8n640: { path: '../models/plate_det_v8n_640.onnx', kind: 2, label: '自前 yolov8n 640（遠景も／重い）' },
 };
-const OCR = '../models/plate_ocr_v2.onnx';
+const OCR = '../models/plate_ocr_v4.onnx';   // v2 と同じ実データ精度 97.9% で、言える地名が 3 倍
 const CORNER = '../models/plate_corner.onnx';
 const SPEC = '../spec/labels.txt';
 
