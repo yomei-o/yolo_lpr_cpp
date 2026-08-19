@@ -324,4 +324,22 @@ inline double eval_region(onx::Trainable& t, const std::vector<Item>& ds, const 
   return n ? (double)ok / n : 0.0;
 }
 
+// --- checkpoints ------------------------------------------------------------------------------
+// The last step is rarely the model you want: with only 576 real crops the region head peaks early and
+// then slides, while the region names that only synthetic teaches keep improving to the end. Snapshots
+// are cheap here (307k floats), so the trainer keeps candidates and picks at the end, exactly like
+// tools/train_ocr.py does.
+using Snapshot = std::vector<std::vector<float>>;
+
+inline Snapshot snapshot(const onx::Trainable& t) {
+  Snapshot s;
+  s.reserve(t.params.size());
+  for (const Tensor& p : t.params) s.push_back(p->data);
+  return s;
+}
+
+inline void restore(onx::Trainable& t, const Snapshot& s) {
+  for (size_t i = 0; i < t.params.size() && i < s.size(); ++i) t.params[i]->data = s[i];
+}
+
 }  // namespace trn

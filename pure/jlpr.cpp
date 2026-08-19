@@ -384,7 +384,10 @@ static int cmd_train(int argc, char** argv) {
   std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string synth = arg_of(argc, argv, "--synth", "");
   std::string alpr = arg_of(argc, argv, "--alpr", "");
-  std::string out = arg_of(argc, argv, "--export", "");
+  std::string out = arg_of(argc, argv, "--export", "");            // best real hold-out checkpoint
+  std::string out_last = arg_of(argc, argv, "--export-last", "");  // the final step
+  std::string out_balanced = arg_of(argc, argv, "--export-balanced", "");
+  double select_margin = atof(arg_of(argc, argv, "--select-margin", "1.0").c_str());
   int steps = std::atoi(arg_of(argc, argv, "--steps", "100").c_str());
   int batch = std::atoi(arg_of(argc, argv, "--batch", "8").c_str());
   float lr = (float)atof(arg_of(argc, argv, "--lr", "3e-4").c_str());
@@ -449,6 +452,16 @@ static int cmd_train(int argc, char** argv) {
            reg_note, alpr_items.size(), alpr_train.size(), alpr_val.size());
   }
 
+  // A held-out slice of the synthetic crops, used only to watch the region names real data lacks.
+  std::vector<int> synth_eval;
+  if (!synth_items.empty()) {
+    for (size_t i = 0; i < synth_items.size(); i += 1 + synth_items.size() / 200)
+      synth_eval.push_back((int)i);
+  }
+  trn::Snapshot best, bal;
+  double best_acc = -1.0, bal_acc = -1.0, bal_syn = -1.0;
+  int best_step = 0, bal_step = 0;
+
   std::vector<const std::vector<trn::Item>*> sets;
   std::vector<const std::vector<int>*> pools;
   std::vector<double> weights;
@@ -506,18 +519,62 @@ static int cmd_train(int argc, char** argv) {
     if (!dump_loss && eval_every && step % eval_every == 0 && !alpr_val.empty()) {
       int n = 0;
       double acc = trn::eval_region(t, alpr_items, alpr_val, region_head, eval_limit, &n);
-      printf("  eval @%d: real region %.1f%% (%d)\n", step, 100 * acc, n);
+      printf("  eval @%d: real region %.1f%% (%d)", step, 100 * acc, n);
+      // The synthetic region score is the only view of the names real data has none of. Same routine,
+      // different item list: synthetic items carry a region label too.
+      double syn = -1.0;
+      if (!synth_eval.empty()) {
+        int sn = 0;
+        syn = trn::eval_region(t, synth_items, synth_eval, region_head, eval_limit, &sn);
+        printf("  synth region %.1f%% (%d)", 100 * syn, sn);
+      }
+      if (acc > best_acc) {
+        best_acc = acc; best_step = step; best = trn::snapshot(t);
+        printf("  <- best");
+      }
+      if (syn > bal_syn && acc >= best_acc - select_margin / 100.0) {
+        bal_syn = syn; bal_acc = acc; bal_step = step; bal = trn::snapshot(t);
+        printf("  <- balanced");
+      }
+      printf("%c", 0x0a);
     }
   }
   if (!alpr_val.empty() && !dump_loss) {
     int n = 0;
     double acc = trn::eval_region(t, alpr_items, alpr_val, region_head, 0, &n);
     printf("final: real hold-out region top1 %.1f%% over %d crops\n", 100 * acc, n);
+    if (acc > best_acc) { best_acc = acc; best_step = steps; best = trn::snapshot(t); }
   }
-  if (!out.empty()) {
+
+  // Export order matters: write the alternates first, then leave the graph holding the model that
+  // `--export` names, so a caller that only looks at one file gets the intended one.
+  auto save_as = [&](const std::string& path, const trn::Snapshot& snap, const char* what,
+                     int at_step, double racc, double sacc) {
+    if (path.empty() || snap.empty()) return;
+    trn::Snapshot keep = trn::snapshot(t);
+    trn::restore(t, snap);
     onx::write_back(t);
-    onx::save_onnx(t.g, out);
-    printf("wrote %s\n", out.c_str());
+    onx::save_onnx(t.g, path);
+    if (sacc >= 0)
+      printf("wrote %s (%s: step %d, real %.1f%% / synth region %.1f%%)\n", path.c_str(), what,
+             at_step, 100 * racc, 100 * sacc);
+    else
+      printf("wrote %s (%s: step %d, real %.1f%%)\n", path.c_str(), what, at_step, 100 * racc);
+    trn::restore(t, keep);
+  };
+  if (!out_last.empty()) {
+    onx::write_back(t);
+    onx::save_onnx(t.g, out_last);
+    printf("wrote %s (final step)\n", out_last.c_str());
+  }
+  save_as(out_balanced, bal, "balanced", bal_step, bal_acc, bal_syn);
+  if (!out.empty()) {
+    if (!best.empty()) save_as(out, best, "best real hold-out", best_step, best_acc, -1.0);
+    else {
+      onx::write_back(t);
+      onx::save_onnx(t.g, out);
+      printf("wrote %s\n", out.c_str());
+    }
   }
   return 0;
 }
