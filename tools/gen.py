@@ -25,7 +25,10 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 PI = 3.14159265358979323846
-FONT_CANDIDATES = ["GenSenRounded2-B.ttc", "YuGothB.ttc", "meiryo.ttc", "msgothic.ttc"]
+# Fixed list, fixed order — the font index is an rng draw, so both languages must see the same
+# set (only files that exist are offered).
+FONT_CANDIDATES = ["GenSenRounded2-B.ttc", "YuGothB.ttc", "meiryo.ttc", "msgothic.ttc",
+                   "NotoSansJP-Bold.ttf", "DroidSansFallbackFull.ttf"]
 
 PRIVATE_NORMAL, COMMERCIAL_NORMAL, KEI_PRIVATE, KEI_COMMERCIAL, LARGE, DESIGN, OTHER, UNKNOWN = range(8)
 PALETTE = {

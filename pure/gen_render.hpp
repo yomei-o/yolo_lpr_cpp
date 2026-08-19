@@ -91,7 +91,12 @@ inline bool load_font(const std::string& path, Font& f) {
 
 // The font list is part of the parity contract: same directory, same sorted order, same index draw.
 inline std::vector<std::string> font_files(const std::string& dir, const std::string& only = "") {
-  static const char* candidates[] = {"GenSenRounded2-B.ttc", "YuGothB.ttc", "meiryo.ttc", "msgothic.ttc"};
+  // Fixed list, fixed order: the font index is an rng draw, so both languages must see the
+  // same set. Only files that exist are offered, which is why a machine with fewer fonts
+  // still generates valid data (it just draws from a shorter list).
+  static const char* candidates[] = {"GenSenRounded2-B.ttc", "YuGothB.ttc", "meiryo.ttc",
+                                     "msgothic.ttc", "NotoSansJP-Bold.ttf",
+                                     "DroidSansFallbackFull.ttf"};
   std::vector<std::string> out;
   for (const char* c : candidates) {
     if (!only.empty() && only != c) continue;      // --font pins one face (for A/B tests)
