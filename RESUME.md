@@ -25,6 +25,8 @@ det 0.93 / 地名 conf 0.94 / 0.44 秒（WASM, node, SIMD）── CLI と同じ
 | WASM（node、実写 2 枚） | CLI と同じ文字列・同じ box を assert して **PASS**、0.44-1.04 秒/フレーム |
 | C++ ⇔ Python | 推論は文字列・argmax 一致、学習は step1 の loss 差 **1e-6**、生成は labels/meta がバイト一致 |
 | 検出器の学習（C++、2026-08-19 夜に追加） | ultralytics の `v8DetectionLoss` と **loss 3.1e-06 / 勾配 2.7e-06** 一致（同じ head テンソル）。2 枚固定 40 step で box 0.247 → **0.024** |
+| 4隅の学習（C++、同上） | PyTorch と **loss 2.7e-06 / 勾配 1.6e-05** 一致。`--init random` で出発点の ONNX も C++ が書く |
+| 検出器の評価（C++、同上） | `jlpr val --model det` が mAP50 / mAP50-95 まで出す。Python と数値一致（差 5e-07 以下）、`compute_ap` は ultralytics と差 0 |
 | 空クローンからの通し | clone 2 本 → ビルド → 生成 → 実写検出 → 学習 → パリティまで **通る**（`SETUP.md`） |
 | ビルド | MSVC 14.41（vcvars 不要の `build/cc.sh`）・g++ 14.2・emcc（`-msimd128`）の 3 系統 |
 
@@ -100,7 +102,8 @@ det 0.93 / 地名 conf 0.94 / 0.44 秒（WASM, node, SIMD）── CLI と同じ
 - [x] **M6 4隅回帰器（両言語）** — 学習完了。合成 val 平均誤差 **1.93%**（目標 1.5% には未達だが実用域）。
       近接の実写で地域名 0.42 → **0.85**、90px 未満の box では使わない（実測で悪化するため）。
       作り直した v2 は合成 1.89% と改善したのに実写で 0.94 → 0.75 と悪化したので**不採用**。
-      **学習は Python のみ**（`jlpr train --model corner` は未実装）＝対等性の唯一の穴。
+      **C++ でも学習できる**（`jlpr train --model corner`、2026-08-19 夜に追加）。PyTorch と
+      loss 2.7e-06 / 勾配 1.6e-05 で一致し、`--init random` なら出発点の ONNX も C++ が書く。
 - [x] **M7 検出器を自前 yolov8 nc=1 に差し替え** — 完了。実プレート貼り込み合成 9000 ＋ 疑似ラベル実車 588 枚、
       28 epoch（Kaggle T4、71 分）で **mAP50 0.985 / mAP50-95 0.947（P 0.999 R 0.987）**。
       `data/det_eval` のバケット別 recall: 320 で **93.7%**、640 で **97.1%**（借り物は同セットで 13.7%）。
@@ -143,9 +146,10 @@ Kaggle GPU は README の kbridge 節（学習 job の先頭は必ず
    自動スキャン、手動枠。`https://yomei-o.github.io/yolo_lpr_cpp/wasm/`
 4. **色別 recall（白/黄/緑/黒）** が M7 の完了条件のまま未測定。実写の黄・緑ナンバーが必要。
    合成の色替えは簡単すぎて役に立たないことは実測済み（README の落とし穴）。
-5. **4隅回帰の学習（`jlpr train --model corner`）** が対等性の最後の穴（検出器の C++ 学習 M7b は
-   2026-08-19 夜に完了）。検出器側で残っているのは学習の**中身**（mosaic 等の拡張、EMA/SGD スケジュール、
-   C++ での mAP 評価）と速度で、CPU 320px batch2 で約 3.5 秒/step なので本番の学習量は Python/GPU のまま。
+5. **対等性の穴は埋まった**（M7b 検出器学習・M6b 4隅学習・C++ の mAP 評価、いずれも 2026-08-19 夜）。
+   残っているのは学習の**中身と速度**: mosaic 等の拡張、EMA / SGD スケジュール / warmup、`--freeze`、
+   そして CPU 速度（検出 320px batch2 で約 3.5 秒/step、4隅 batch32 で約 0.9 秒/step）。
+   本番の学習量は Python/GPU で回し、C++ は追加学習と検算に使う、という役割分担でよい。
 6. 却下済みなので触らないこと: 検出器 480 での 320/640 統合（合成では良いが実写の遠景を落とす）、
    4隅回帰 v2（合成 1.89% でも実写で悪化）、書体を増やして地名を改善（差は 1.4pt しかない）。
 
@@ -197,6 +201,37 @@ module 番号が違うエクスポート（`/model.16/…` など）でも動く
 
 まだ無いもの: mosaic 等のデータ拡張、EMA / SGD スケジュール / warmup、C++ 側の mAP 評価、
 `--freeze`。本番量（合成 9000 × 28 epoch）は CPU では現実的でないので Python/GPU のままでよい。
+
+## 評価と 4隅学習も C++ に載せた — 2026-08-19 夜（対等性の穴が全部埋まった）
+
+**`jlpr val --model det`（mAP）**: バケット別 recall（`tools/eval_det.py` と同じ）＋ mAP50 / mAP50-95。
+積分は Ultralytics の `compute_ap` をそのまま（101 点補間、番兵の置き方まで）、割り当ては
+`match_predictions`（IoU 降順・gt も det も 1 回きり）。`tools/eval_det.py` にも同じ実装を足したので、
+**両言語が同じ数値**を出す（合成 60 フレームで mAP50 0.9850 / mAP50-95 0.8716、差 3e-07）。
+`tools/parity/eval_det.py` は両者の突き合わせに加えて、**Python の `compute_ap` が ultralytics のそれと
+差 0** であることも見る（自分の読み違いを自分で検算しないため）。
+注意: 同じ指標でも `ultralytics val` の数字とは一致しない。**入力が違う**（素の resize vs letterbox）。
+
+**`jlpr train --model corner`（M6b）**: 4隅回帰の学習。これで検出・認識・4隅の**3 段とも両言語で学習
+できる**。`tools/train_corner.py` と同じ手順・同じ乱数の引き順なので同じ seed で同じバッチを見る。
+実装上の勘所:
+- **BN を学習モードで回す**必要があった（`run_onnx(..., bn_training=true)` を追加）。認識器の微調整は
+  BN 統計を止めるのが正解だったが、4隅はゼロから学習できる＝止めると学習が成立しない。running 統計は
+  バッファとして in-place 更新し、`write_back` で ONNX に書き戻る。
+- `--init random` で**出発点の ONNX を C++ が書く**（`crn::build_graph`、PyTorch 既定の ±1/√fan_in）。
+  これで 4隅も Python 無しで完結する。
+- 損失は smooth L1（beta 0.02）を融合ノードで、最適化は AdamW + warmup×cosine + grad clip 5。
+
+| 確認 | 結果 |
+|---|---|
+| 4隅学習 C++ ⇔ PyTorch | 同じ重み・同じバッチで loss **2.7e-06** / 勾配の最悪 **1.6e-05**（相対、`tools/parity/train_corner.py`） |
+| C++ が書いた ONNX の意味 | onnxruntime ⇔ PyTorch CornerNet が **5.96e-08**（`--check-graph`）。ONNX ライタが思った通りのグラフを吐いている証拠 |
+| 既存 `plate_corner.onnx` の評価 | C++ の評価器で **1.93%**（Python の測定値と同じ）。データの作り方・指標の定義がずれていない |
+| 検出器の評価 C++ ⇔ Python | mAP50 0.9850 / mAP50-95 0.8716、バケット表・TP/FP まで一致（差 5e-07 以下） |
+| 借り物検出器を同じ物差しで | 同じ 60 フレームで mAP50 **0.2203** / recall 13.6%（近接主体の合成なので不利なのは既知） |
+
+速度メモ: バッチの画像デコードを `parallel_for` に載せた（4隅で 2.5 秒/step → 0.9 秒/step、
+検出も同様）。乱数の引き順は変えていないので**数値は完全に同じ**（loss も eval も一致を確認）。
 
 ## 合成データのドメインギャップ — 2026-08-19 実測
 

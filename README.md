@@ -180,13 +180,13 @@ box が良くなるだけで地域名の信頼度が 0.57 → 0.92 に動く。*
 | 合成データ生成 | `gen.py` | `gen.cpp` | 同じ seed で**文字列・4隅・変換パラメータ・色・種別が完全一致**。画像はラスタライザ差（PIL/FreeType vs stb_truetype）が出るので、一致は幾何とラベルまでとし、画像は統計と目視で同等を確認 |
 | 学習（認識器） | `train_ocr.py`（PyTorch 移植、ONNX 重み読み込み） ✅ | `jlpr train`（**ONNX グラフを直接学習**） ✅ | 同じ ONNX・同じ seed・同じ batch で **step1 の loss 差 1e-6**、以降は相対 1% 以内（実測、`tools/parity/train.py`） |
 | 学習（検出器） | `train_det.py`（Ultralytics） ✅ | `jlpr train --model det`（**ONNX グラフを直接学習**） ✅ | 同じ head テンソルを両者に食わせて loss 3 項が相対 **1e-05 以内**、勾配が **3e-06 以内**（実測、`tools/parity/train_det.py`） |
-| 学習（4隅） | `train_corner.py` ✅ | `jlpr train --model corner`（未実装） | 唯一まだ Python 専用。合成 corners.txt をそのまま使うので移植は素直 |
+| 学習（4隅） | `train_corner.py` ✅ | `jlpr train --model corner`（**ONNX を直接学習**、BN は学習モード） ✅ | 同じ ONNX・同じバッチで **loss 2.7e-06 / 勾配 1.6e-05**（`tools/parity/train_corner.py`）。`--init random` なら出発点の ONNX も C++ が書く |
 | head の拡張（地名 133→138） | `ocr_model.py` の重み読み込み時 ✅ | `onx::widen_heads` ✅ | 同じ ONNX から始めて**学習前の精度が一致**（追加クラス bias -10 で 92.4%、0 で 85.4%） |
 | チェックポイント選択 | `--export` / `--export-balanced` / `--export-last` ✅ | 同じ 3 フラグ ✅ | 実データ最良／実データを 1pt 以内に抑えて合成地名最大／最終step。選択規則が同一 |
 | 生成の地名指定 | `--region <n>\|sweep\|a-b` ✅ | 同じ ✅ | labels/meta がバイト一致（`--region sweep` で確認） |
 | 書体集合の固定 | `--fonts-strict` ✅ | 同じ ✅ | `spec/fonts.txt` の 2 書体だけで生成し、どのマシンでも同じ画になる |
 | 推論 | `infer.py`（onnxruntime） ✅ | 自前 ONNX ランナ ✅ | 同一画像で**同一文字列・同一 argmax**、box 差 0.10px / det 差 0.0000（実測）。自作側の float 加算誤差は認識器 3.3e-05・検出器 3e-03 なので、閾値ぎりぎりの box は割れる |
-| 評価（mAP / 全文一致 / 色別内訳） | `eval.py` | `jlpr val` | 同じデータセットで**同じ数値**（mAP は 1e-3 以内） |
+| 評価（mAP / 全文一致 / 色別内訳） | `eval_det.py` / `eval_ocr.py` ✅ | `jlpr val --model det` / `jlpr val` ✅ | 同じ dir・同じ ONNX で mAP50・mAP50-95・P/R/F1・バケット別 recall が一致（実測差 **5e-07 以下**、`tools/parity/eval_det.py`）。`compute_ap` は ultralytics と**差 0** |
 | ONNX 出力 | `torch.onnx.export` | 自前エクスポータ | 出力 ONNX を相互に読み込んで **forward が 1e-5 以内** |
 | WASM | — | `emcc`（C++ 側の役目） | ブラウザで CLI と同じ文字列が出る |
 
@@ -348,6 +348,43 @@ dfl 項が 0.70 前後で下げ止まるのは正常。DFL の下限は目標値
 まだ入っていないもの: mosaic などの拡張、EMA・SGD スケジュール、C++ 側の mAP 評価。
 本番の学習量（合成 9000 枚 × 28 epoch）は CPU では現実的でないので、そこは引き続き Python/GPU
 （`tools/train_det.py`）で回し、C++ 側は**同じ損失に到達できることの証明と追加学習**に使う。
+
+### 評価も 4隅の学習も C++ で（2026-08-19 夜、対等性の残り 2 つ）
+
+**`jlpr val --model det`** — 検出器の評価。バケット別 recall（`tools/eval_det.py` と同じ突き合わせ）に
+加えて **mAP50 / mAP50-95** を出す。積分の作法は Ultralytics の `compute_ap` そのまま（101 点補間、
+番兵の置き方まで）で、突き合わせは 2 段構え: C++ ⇔ Python が同じ数値であること、そして Python の
+`compute_ap` が **ultralytics のものと差 0** であること（`tools/parity/eval_det.py`）。
+なお同じ指標でも `ultralytics val` の数字とは一致しない。**入力が違う**（本リポは素の resize、
+Ultralytics は letterbox）。P/R/F1 は max-F1 を探さず**指定した conf での値**を出す（CLI と WASM が
+実際に動く閾値だから）。
+
+**`jlpr train --model corner`** — 4隅回帰器の学習。これで**学習は 3 段とも両言語**になった。
+`tools/train_corner.py` と同じ手順・同じ**乱数の引き順**（画像 index → 枠ジッタ 4 つ → 拡大率）なので、
+同じ seed なら同じバッチを見る。認識器・検出器と同じく **ONNX をそのまま学習**するが、2 点違う:
+BatchNorm を**学習モード**で回す（run_onnx の `bn_training`、running 統計はバッファとして in-place 更新
+→ `write_back` で ONNX に戻る）ことと、`--init random` で**出発点の ONNX を C++ 側が書く**こと
+（PyTorch の既定初期化と同じ ±1/√fan_in）。
+
+```sh
+./jlpr.exe val --model det --data data/det_val --det models/plate_det_v8n_320.onnx --fmt cxcywh
+python tools/parity/eval_det.py --data data/det_val --det models/plate_det_v8n_320.onnx
+
+./jlpr.exe train --model corner --synth data/synth --steps 3000 --batch 32 \
+                 --init random --export models/plate_corner_new.onnx
+./jlpr.exe train --model corner --synth data/synth --init models/plate_corner.onnx --steps 1 \
+                 --batch 8 --dump-fixture scratch/crn_fix.bin
+python tools/parity/train_corner.py --fixture scratch/crn_fix.bin --onnx models/plate_corner.onnx
+./jlpr.exe train --model corner --synth data/synth_val --init models/plate_corner.onnx --steps 0  # 評価だけ
+```
+
+| 確認 | 結果 |
+|---|---|
+| 検出器の評価 C++ ⇔ Python | 合成 60 フレームで mAP50 **0.9850** / mAP50-95 **0.8716** が両言語一致（差 5e-07 以下）、バケット表も TP/FP も完全一致 |
+| `compute_ap` ⇔ ultralytics | ランダムな P/R 曲線 20 本で **差 0.00e+00** |
+| 4隅学習 C++ ⇔ PyTorch | 同じ重み・同じバッチで loss **2.7e-06**、勾配の最悪 **1.6e-05**（相対） |
+| C++ が書いた ONNX | onnxruntime と PyTorch CornerNet が **5.96e-08** で一致（`--check-graph`） |
+| 既存 `plate_corner.onnx` の評価 | C++ で **1.93%**（Python が測った 1.93% と同じ）。評価系が同じものを測っている証拠 |
 
 ### 認識器はどれを使うか — 実データで測って決めた（2026-08-19）
 `alpr_jp` の地域名ラベル付き **720 枚**で 2 つの既存モデルを比較（`python tools/eval_ocr.py --data <alpr_jp>`）:

@@ -139,7 +139,7 @@ inline Batch make_batch(const std::vector<Item>& items, const std::vector<int>& 
   const int64_t B = (int64_t)idx.size();
   out.x = make_tensor({B, 3, S, S}, false);
   out.gts.resize((size_t)B);
-  for (int64_t b = 0; b < B; ++b) {
+  parallel_for(B, [&](int64_t b) {                 // decode + resize per image, independently
     const Item& it = items[(size_t)idx[(size_t)b]];
     int W = 0, H = 0, C = 0;
     std::vector<unsigned char> blob = trn::read_file(it.img);
@@ -154,7 +154,7 @@ inline Batch make_batch(const std::vector<Item>& items, const std::vector<int>& 
       const float cx = g.cx * S, cy = g.cy * S, w = g.w * S, h = g.h * S;
       out.gts[(size_t)b].push_back({(float)g.cls, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2});
     }
-  }
+  });
   return out;
 }
 

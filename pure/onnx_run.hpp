@@ -48,10 +48,15 @@ inline std::vector<int64_t> attr_ints(const Node& n, const std::string& name) {
 // `preset` lets a caller supply the initializer tensors instead of having them rebuilt from the
 // graph on every call — that is what makes training possible: the same parameter Tensors persist
 // across steps, so gradients accumulate into them and an optimiser can update them in place.
+// `bn_training=true` puts BatchNormalization in training mode: the batch's own statistics normalise
+// the activations AND the running mean/var tensors are updated in place with `bn_momentum` (torch's
+// default 0.1), so a model trained here still evaluates correctly after write_back + save_onnx. The
+// recognizer trainer deliberately does NOT use this (measured: moving BN stats costs real-data
+// accuracy when fine-tuning); the corner net, which can be trained from scratch, needs it.
 inline std::map<std::string, Tensor> run_onnx(const Graph& g, const Tensor& x,
                                              const std::set<std::string>& stop = {},
                                              const std::map<std::string, Tensor>* preset = nullptr,
-                                             bool bn_training = false) {
+                                             bool bn_training = false, float bn_momentum = 0.1f) {
   std::map<std::string, Tensor> vals;
   std::map<std::string, const IntsTensor*> imap;
   std::deque<IntsTensor> const_ints;      // storage for Constant nodes (deque: stable addresses)
@@ -130,9 +135,13 @@ inline std::map<std::string, Tensor> run_onnx(const Graph& g, const Tensor& x,
     } else if (op == "BatchNormalization") {
       Tensor gamma = get(nd.input[1]), beta = get(nd.input[2]);
       Tensor rm = get(nd.input[3]), rv = get(nd.input[4]);
-      std::vector<float> m = rm->data, v = rv->data;              // read-only copies of the stats
-      y = batchnorm2d(get(nd.input[0]), gamma, beta, m, v, attr_f(nd, "epsilon", 1e-5f),
-                      bn_training, 0.f);
+      if (bn_training) {                                          // stats are buffers: updated in place
+        y = batchnorm2d(get(nd.input[0]), gamma, beta, rm->data, rv->data,
+                        attr_f(nd, "epsilon", 1e-5f), true, bn_momentum);
+      } else {
+        std::vector<float> m = rm->data, v = rv->data;            // read-only copies of the stats
+        y = batchnorm2d(get(nd.input[0]), gamma, beta, m, v, attr_f(nd, "epsilon", 1e-5f), false, 0.f);
+      }
     } else if (op == "MaxPool") {
       int64_t k = attr_i0(nd, "kernel_shape", 1), s = attr_i0(nd, "strides", 1), p = attr_i0(nd, "pads", 0);
       y = maxpool2d(get(nd.input[0]), k, s, p);
