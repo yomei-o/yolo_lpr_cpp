@@ -70,10 +70,12 @@ python tools/train_det.py --data data/det_train2 --data data/det_real --val data
   --epochs 28 --imgsz 640 --batch 32 \
   --export models/plate_det_new.onnx --export-imgsz 320 --export-imgsz 640
 
-# 検出器（C++。既存の ONNX をそのまま学習する。CPU 320px batch2 で約 3.5 秒/step なので
-# 本番量は上の Python/GPU で回し、こちらは追加学習と「同じ損失で動く」ことの確認に使う）
+# 検出器（C++。既存の ONNX をそのまま学習する。mosaic/affine/HSV/反転・SGD+warmup・EMA 付き。
+# CPU 320px batch2 で約 3.5 秒/step なので本番量は上の Python/GPU、こちらは追加学習と検算用）
 ./jlpr.exe train --model det --init models/plate_det_v8n_320.onnx --data data/det \
-  --steps 200 --batch 2 --lr 1e-4 --export models/plate_det_new_320.onnx
+  --val data/det_val --val-every 200 --epochs 3 --batch 8 \
+  --export-best models/plate_det_new_320.onnx --export models/plate_det_new_320_last.onnx
+./jlpr.exe train --model det --data data/det --check-aug 4 --batch 4    # 箱が画素と一緒に動くか
 ```
 
 学習の設計（どのデータでどの head を学習し、どれをマスクするか）は `pure/train_ocr.hpp` の冒頭コメントと
@@ -93,6 +95,9 @@ python tools/parity/train_det.py --fixture scratch/det_fix.bin           # 検�
 python tools/parity/train_corner.py --fixture scratch/crn_fix.bin --onnx models/plate_corner.onnx
 ./jlpr.exe val --data ../alpr_jp --kind alpr --holdout --ocr models/plate_ocr_new.onnx   # 実データ hold-out
 python tools/check_regions.py --data data/region_sweep --ocr models/plate_ocr_new.onnx --alpr ../alpr_jp
+./jlpr.exe check-regions --data data/region_sweep --ocr models/plate_ocr_new.onnx --alpr ../alpr_jp  # 同じ数値
+./jlpr.exe val --data ../alpr_jp --kind alpr --holdout --tta --ocr models/plate_ocr_new.onnx         # 6クロップTTA
+./jlpr.exe context-test --img assets/kei-commercial-yokohama480ri4567.jpg --det models/plate_det_new_320.onnx
 python tools/eval_det.py --data data/det_eval --det models/plate_det_new_320.onnx --det-kind v8 --fmt cxcywh
 ./jlpr.exe val --model det --data data/det_eval --det models/plate_det_new_320.onnx --fmt cxcywh   # 同じ数値
 python tools/parity/eval_det.py --data data/det_eval --det models/plate_det_new_320.onnx          # 突き合わせ

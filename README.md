@@ -179,7 +179,7 @@ box が良くなるだけで地域名の信頼度が 0.57 → 0.92 に動く。*
 | ラベル表（地名138/かな/分類番号/種別） | `labels.py` ✅ | `spec.hpp` ✅ | 唯一の定義 `spec/labels.txt` を**両方が実行時にパース**（生成物ではなく同じ入力）。dump と埋め込みヘッダがバイト一致 |
 | 合成データ生成 | `gen.py` | `gen.cpp` | 同じ seed で**文字列・4隅・変換パラメータ・色・種別が完全一致**。画像はラスタライザ差（PIL/FreeType vs stb_truetype）が出るので、一致は幾何とラベルまでとし、画像は統計と目視で同等を確認 |
 | 学習（認識器） | `train_ocr.py`（PyTorch 移植、ONNX 重み読み込み） ✅ | `jlpr train`（**ONNX グラフを直接学習**） ✅ | 同じ ONNX・同じ seed・同じ batch で **step1 の loss 差 1e-6**、以降は相対 1% 以内（実測、`tools/parity/train.py`） |
-| 学習（検出器） | `train_det.py`（Ultralytics） ✅ | `jlpr train --model det`（**ONNX グラフを直接学習**） ✅ | 同じ head テンソルを両者に食わせて loss 3 項が相対 **1e-05 以内**、勾配が **3e-06 以内**（実測、`tools/parity/train_det.py`） |
+| 学習（検出器） | `train_det.py`（Ultralytics） ✅ | `jlpr train --model det`（**ONNX グラフを直接学習**、mosaic/affine/HSV/反転・SGD+warmup・EMA・学習中 val 付き） ✅ | 同じ head テンソルを両者に食わせて loss 3 項が相対 **1e-05 以内**、勾配が **3e-06 以内**（実測、`tools/parity/train_det.py`）。拡張は箱が画素と一緒に動くことを `--check-aug` で検算 |
 | 学習（4隅） | `train_corner.py` ✅ | `jlpr train --model corner`（**ONNX を直接学習**、BN は学習モード） ✅ | 同じ ONNX・同じバッチで **loss 2.7e-06 / 勾配 1.6e-05**（`tools/parity/train_corner.py`）。`--init random` なら出発点の ONNX も C++ が書く |
 | head の拡張（地名 133→138） | `ocr_model.py` の重み読み込み時 ✅ | `onx::widen_heads` ✅ | 同じ ONNX から始めて**学習前の精度が一致**（追加クラス bias -10 で 92.4%、0 で 85.4%） |
 | チェックポイント選択 | `--export` / `--export-balanced` / `--export-last` ✅ | 同じ 3 フラグ ✅ | 実データ最良／実データを 1pt 以内に抑えて合成地名最大／最終step。選択規則が同一 |
@@ -188,6 +188,9 @@ box が良くなるだけで地域名の信頼度が 0.57 → 0.92 に動く。*
 | 推論 | `infer.py`（onnxruntime） ✅ | 自前 ONNX ランナ ✅ | 同一画像で**同一文字列・同一 argmax**、box 差 0.10px / det 差 0.0000（実測）。自作側の float 加算誤差は認識器 3.3e-05・検出器 3e-03 なので、閾値ぎりぎりの box は割れる |
 | 評価（mAP / 全文一致 / 色別内訳） | `eval_det.py` / `eval_ocr.py` ✅ | `jlpr val --model det` / `jlpr val` ✅ | 同じ dir・同じ ONNX で mAP50・mAP50-95・P/R/F1・バケット別 recall が一致（実測差 **5e-07 以下**、`tools/parity/eval_det.py`）。`compute_ap` は ultralytics と**差 0** |
 | ONNX 出力 | `torch.onnx.export` | 自前エクスポータ | 出力 ONNX を相互に読み込んで **forward が 1e-5 以内** |
+| 疑似ラベル | `pseudo_label.py` ✅ | `jlpr pseudo-label` ✅ | 同じ検出器で同じ YOLO 形式を書く（書いたラベルを `jlpr val --model det` で読み返して検算） |
+| 地名の到達性 | `check_regions.py` ✅ | `jlpr check-regions` ✅ | 実測**完全一致**（v7_bal 42.0%、2025 追加 1/5、一度も読めない名前 80 個） |
+| 診断（窓サイズ掃引 / 色替え / NMS 剥がし） | `context_test.py` / `recolor_test.py` / `strip_nms.py` ✅ | `jlpr context-test` / `recolor-test` / `strip-nms` ✅ | context-test は det も IoU も plate px も**完全一致**。strip-nms の出力は onnxruntime が読める |
 | WASM | — | `emcc`（C++ 側の役目） | ブラウザで CLI と同じ文字列が出る |
 
 **Python は必須ではなく、速いだけ。** 時間に余裕があるなら **C++ だけで全部完結できる**
@@ -385,6 +388,31 @@ python tools/parity/train_corner.py --fixture scratch/crn_fix.bin --onnx models/
 | 4隅学習 C++ ⇔ PyTorch | 同じ重み・同じバッチで loss **2.7e-06**、勾配の最悪 **1.6e-05**（相対） |
 | C++ が書いた ONNX | onnxruntime と PyTorch CornerNet が **5.96e-08** で一致（`--check-graph`） |
 | 既存 `plate_corner.onnx` の評価 | C++ で **1.93%**（Python が測った 1.93% と同じ）。評価系が同じものを測っている証拠 |
+
+### 検出器の学習に「中身」を入れた／踏んだ罠（2026-08-19 夜）
+
+損失が正しいだけでは学習は回らないので、`tools/train_det.py` が Ultralytics に頼んでいるものを
+C++ 側にも入れた: **mosaic（4枚を 2S キャンバス）＋回転/拡大縮小/平行移動＋HSV＋左右反転＋close_mosaic**、
+**SGD(momentum 0.937, nesterov, wd 5e-4) ＋ warmup（lr と momentum の両方）＋ linear/cosine 減衰**、
+**EMA(0.9999, ramp)**、`--freeze N`、`--epochs`、そして**学習中の検証**（`--val/--val-every` で
+製品経路＝フルグラフ + NMS を mAP で測り、`--export-best` で mAP50-95 最良の EMA 重みを書き出す）。
+
+拡張は「箱が画素と一緒に動いているか」が命なので、`--check-aug` で**学習済み検出器に読ませて検算**する:
+
+```sh
+./jlpr.exe train --model det --data data/det_val --check-aug 4 --batch 4
+#   check-aug [plain resize]: 15 labels, the shipped detector finds 100.0% (mean best IoU 0.933)
+#   check-aug [augmented]   : 19 labels, the shipped detector finds 100.0% (mean best IoU 0.954)
+```
+
+**踏んだ罠（重要）: 重みでない初期化子を最適化していた。** `make_trainable` が ONNX の初期化子を
+全部パラメータ扱いしていたので、neck の Resize scales（float `[1,1,2,2]`）まで対象に入っていた。
+勾配は来ないので SGD/Adam は動かさないが、**decoupled weight decay は勾配を見ずに縮める**:
+2.0 → 1.9999996 になり、`onnx_run` の `(int64_t)scale` が 2 ではなく **1** に落ちて neck が崩壊する。
+実測 **1 step で loss 2.90 → 23.13、mAP50 0.995 → 0.005**（重みは全部 7 桁一致したまま）。
+対策は 2 つ: `weight_initializers()` で Conv/Gemm/MatMul/BN の**重み位置の入力だけ**をパラメータにし、
+さらに損失が到達する部分グラフに限定する（検出器なら head 6 本＝DFL 射影と decode 尾部は対象外）。
+`Resize` のスケールも `llround` で読むようにした。
 
 ### 認識器はどれを使うか — 実データで測って決めた（2026-08-19）
 `alpr_jp` の地域名ラベル付き **720 枚**で 2 つの既存モデルを比較（`python tools/eval_ocr.py --data <alpr_jp>`）:
