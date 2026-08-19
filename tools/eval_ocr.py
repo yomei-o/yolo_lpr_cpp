@@ -28,6 +28,9 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")   # Japanese labels on a cp932 console
 
 CATEGORIES = ["自家用", "自家用(軽)", "事業用", "事業用(軽)"]
+HEAD_ORDER = ["region", "class_num_01", "class_num_02", "class_num_03", "hiragana",
+              "plate_num_01", "plate_num_02", "plate_num_03", "plate_num_04",
+              "plate_kind", "legible"]
 
 
 class Recognizer:
@@ -96,9 +99,73 @@ def scan(root, limit=0):
     return items
 
 
+def scan_synth(root, limit=0):
+    """A generated set: labels.txt lines are `<file> <11 head indices>` (tools/gen.py / jlpr gen).
+    corners.txt, if present, gives the plate's 4 corners in crop pixels — their bbox is what the
+    detector would hand the recognizer, so it is used as the box instead of the whole crop."""
+    items = []
+    lab = os.path.join(root, "labels.txt")
+    if not os.path.exists(lab):
+        return items
+    boxes = {}
+    cpath = os.path.join(root, "corners.txt")
+    if os.path.exists(cpath):
+        with open(cpath, encoding="utf-8") as f:
+            for line in f:
+                q = line.split()
+                if len(q) >= 9:
+                    v = [float(x) for x in q[1:9]]
+                    xs, ys = v[0::2], v[1::2]
+                    boxes[q[0]] = (min(xs), min(ys), max(xs), max(ys))
+    with open(lab, encoding="utf-8") as f:
+        for line in f:
+            p = line.split()
+            if len(p) >= 12 and os.path.exists(os.path.join(root, p[0])):
+                items.append((os.path.join(root, p[0]), [int(v) for v in p[1:12]],
+                              boxes.get(p[0], "synth")))
+    if limit and limit < len(items):
+        rng = Rng(7)
+        idx = list(range(len(items)))
+        for i in range(len(idx) - 1, 0, -1):
+            j = rng.below(i + 1)
+            idx[i], idx[j] = idx[j], idx[i]
+        items = [items[i] for i in sorted(idx[:limit])]
+    return items
+
+
+def eval_synth(recs, items, margins, sp_ref):
+    """Per-head and whole-plate accuracy against the generator's own labels. Only the 9 heads the
+    shipped models actually have are scored; plate_kind / legible wait for M5."""
+    stats = {}
+    for name in recs:
+        stats[name] = {"n": 0, "per_head": [0] * 9, "full": 0, "full_legible": 0, "n_legible": 0}
+    for path, want, box_or_tag in items:
+        rgb = I.load_rgb(path)
+        H, W, _ = rgb.shape
+        box = box_or_tag if isinstance(box_or_tag, tuple) else (0.0, 0.0, float(W), float(H))
+        legible = want[10] == 1
+        for name, r in recs.items():
+            out = r.read(rgb, box, margins)
+            s = stats[name]
+            s["n"] += 1
+            s["n_legible"] += int(legible)
+            allok = True
+            for h in range(9):
+                tok_want = sp_ref.head(HEAD_ORDER[h]).tok[want[h]]
+                got = out[HEAD_ORDER[h]]["top"][0]
+                ok = got == tok_want
+                s["per_head"][h] += int(ok)
+                allok = allok and ok
+            s["full"] += int(allok)
+            if legible:
+                s["full_legible"] += int(allok)
+    return stats
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", required=True, help="alpr_jp checkout root")
+    ap.add_argument("--data", required=True, help="alpr_jp checkout root, or a generated dir")
+    ap.add_argument("--kind", default="alpr", choices=["alpr", "synth"])
     ap.add_argument("--models", default="ours,ekmixer")
     ap.add_argument("--ours", default=os.path.join(ROOT, "models", "plate_ocr.onnx"))
     ap.add_argument("--ekmixer", default=os.path.join(ROOT, "..", "_pyj", "weight", "EkMixer-128x128.onnx"))
@@ -107,9 +174,9 @@ def main():
     args = ap.parse_args()
 
     margins = [0.0] if args.single else I.MARGINS
-    items = scan(args.data, args.limit)
+    items = scan_synth(args.data, args.limit) if args.kind == "synth" else scan(args.data, args.limit)
     if not items:
-        raise SystemExit("no labelled crops under %s (expected 自家用/<地名>/*.png)" % args.data)
+        raise SystemExit("no labelled crops under %s (kind=%s)" % (args.data, args.kind))
 
     recs = {}
     if "ours" in args.models:
@@ -120,6 +187,21 @@ def main():
         else:
             recs["ekmixer"] = Recognizer(args.ekmixer,
                                          os.path.join(ROOT, "spec", "ekmixer_labels.txt"), softmax=True)
+
+    if args.kind == "synth":
+        sp_ref = L.load(os.path.join(ROOT, "spec", "labels.txt"))
+        t0 = time.time()
+        st = eval_synth(recs, items, margins, sp_ref)
+        print("\n%d generated crops, %s, %.0fs" % (len(items), "1 crop" if args.single else
+                                                   "%d-crop TTA" % len(margins), time.time() - t0))
+        for name, s in st.items():
+            print("%-8s whole plate %5.1f%%   (legible only %5.1f%% of %d)"
+                  % (name, 100.0 * s["full"] / s["n"],
+                     100.0 * s["full_legible"] / max(1, s["n_legible"]), s["n_legible"]))
+            print("           per head: " + "  ".join(
+                "%s %.0f%%" % (HEAD_ORDER[h].replace("class_num_", "cls").replace("plate_num_", "num"),
+                               100.0 * s["per_head"][h] / s["n"]) for h in range(9)))
+        return 0
 
     stats = {k: {"n": 0, "top1": 0, "top3": 0, "conf": 0.0, "conf_right": 0.0,
                  "by_cat": {}} for k in recs}
