@@ -11,4 +11,8 @@ data/
 __pycache__/
 *.pyc
 .venv/
-fonts/
+# Fonts: the OFL one IS redistributable and is committed, so a fresh clone can generate data with no
+# network. The Windows system faces (meiryo / msgothic / YuGothB) are proprietary — never commit those.
+fonts/*
+!fonts/GenSenRounded2-B.ttc
+!fonts/SIL_Open_Font_License_1.1.txt
