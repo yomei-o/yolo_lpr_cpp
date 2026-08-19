@@ -96,3 +96,28 @@
 
 `meta.txt` は両言語でバイト一致することを `tools/parity/gen.py` が確認する。書式は
 `<file> kind=<tok> region=<idx> cls=<str> hira=<idx> serial=<str> yaw=%.4f ...`（数値は全て `%.4f`）。
+
+## 検出用データ（`jlpr gen-det` / `tools/gen_det.py`）の draw 順序
+
+1 フレームごとに `Rng(seed ^ (index * 0x9E3779B97F4A7C15) ^ 0xD1B54A32D192ED03)` を作る
+（認識用の crop 生成とは別の塩を混ぜるので、同じ seed でも別の列になる）。
+
+| # | 引くもの | 引き方 | 備考 |
+|---|---|---|---|
+| D1 | `n_plates` | `below(100)` | 0-7 → **0 枚（ハードネガ）** / 8-74 → 1 枚 / 75-94 → 2 枚 / 95-99 → 3 枚 |
+| D2 | `bg_real` | `below(100) < 70` | 実写背景を使うか（`--bg` が空なら常に合成） |
+| D3 | `bg_idx` | `below(背景ファイル数)` | 使わなくても必ず引く（列を崩さない）。ファイルは**名前順**で固定 |
+| D4 | `bg_hue` | `range(0,1)` | 合成背景用 |
+| D5 | `bg_dark` | `range(0.15,0.85)` | 同 |
+| D6 | プレート内容 | 上の #1-#28 をそのまま | プレート 1 枚ごとに繰り返す |
+| D7 | `share` | `exp(range(ln 0.03, ln 0.95))` | **プレート幅 ÷ 画像幅**。対数一様なので近接も遠景も出る |
+| D8 | `cx` | `range(0.15,0.85)` | 画像内の中心位置 |
+| D9 | `cy` | `range(0.15,0.85)` | 同 |
+| D10 | `font` | `below(フォント数)` | プレートごと |
+| D11-D17 | 画像全体の劣化 | `brightness range(0.5,1.3)` / `contrast range(0.75,1.25)` / `warm range(-0.1,0.1)` / `blur range(0,1.2)` / `motion range(0,2.0)` / `noise range(0,8)` / `jpeg_q below(50)+50` | プレート個別ではなく**画像全体**にかける |
+
+box は 4 隅の bbox を画像で切り取ったもの。**見えている面積が元の 35% 未満、または幅 6px / 高さ 4px 未満は捨てる**
+（`keep=0`。ラベルにも corners にも出さないが、meta には残して比較できるようにする）。
+
+出力は標準的な YOLO 形式（`images/` と `labels/`、クラス 0 = plate）＋ `corners.txt`（正規化 4 隅）＋ `meta.txt`。
+`tools/parity/gen_det.py` が meta / corners / labels のバイト一致を確認する。

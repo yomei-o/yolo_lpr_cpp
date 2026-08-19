@@ -17,6 +17,8 @@
 #include "onnx_export_lpr.hpp"
 #include "pipeline.hpp"
 #include "gen_render.hpp"
+#include "gen_det.hpp"
+#include <filesystem>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -167,6 +169,135 @@ static int cmd_gen(int argc, char** argv) {
   fclose(fl); fclose(fc); fclose(fm);
   printf("%s %d samples into %s (out_px=%d, seed=%llu)\n", meta_only ? "meta for" : "wrote", count,
          out.c_str(), out_px, (unsigned long long)seed);
+  return 0;
+}
+
+
+// jlpr gen-det — detection training data (full frames, plates at 3%..95% of the frame width).
+static int cmd_gen_det(int argc, char** argv) {
+  std::string out = arg_of(argc, argv, "--out", "data/det");
+  std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
+  std::string font_dir = arg_of(argc, argv, "--fonts", "fonts");
+  std::string bg_dir = arg_of(argc, argv, "--bg", "");
+  std::string only_font = arg_of(argc, argv, "--font", "");
+  int count = std::atoi(arg_of(argc, argv, "--count", "16").c_str());
+  int start = std::atoi(arg_of(argc, argv, "--start", "0").c_str());
+  int imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "640").c_str());
+  uint64_t seed = strtoull(arg_of(argc, argv, "--seed", "12345").c_str(), nullptr, 10);
+  bool meta_only = has_flag(argc, argv, "--meta-only");
+  bool quiet = has_flag(argc, argv, "--quiet");
+
+  spec::Spec sp = spec::load(spec_path);
+  std::vector<std::string> font_paths = gen::font_files(font_dir, only_font);
+  if (font_paths.empty()) { printf("no fonts in %s\n", font_dir.c_str()); return 1; }
+
+  // Background pool: real photos make the negatives and the context far more honest than a gradient.
+  // Sorted so the index draw means the same file in both languages.
+  std::vector<std::string> bgs;
+  if (!bg_dir.empty()) {
+    std::error_code ec;
+    for (auto& e : std::filesystem::directory_iterator(bg_dir, ec)) {
+      if (!e.is_regular_file()) continue;
+      std::string x = e.path().string();
+      std::string low = x;
+      for (char& c : low) c = (char)tolower(c);
+      if (low.size() > 4 && (low.rfind(".jpg") == low.size() - 4 || low.rfind(".png") == low.size() - 4 ||
+                             low.rfind(".jpeg") == low.size() - 5))
+        bgs.push_back(x);
+    }
+    std::sort(bgs.begin(), bgs.end());
+    if (!quiet) printf("background pool: %zu files from %s\n", bgs.size(), bg_dir.c_str());
+  }
+
+  std::vector<gen::Font> fonts;
+  if (!meta_only) {
+    for (const std::string& f : font_paths) {
+      gen::Font fo;
+      if (gen::load_font(f, fo)) fonts.push_back(std::move(fo));
+    }
+    if (fonts.empty()) { printf("no usable font in %s\n", font_dir.c_str()); return 1; }
+  }
+
+  make_dir(out);
+  make_dir(out + "/images");
+  make_dir(out + "/labels");
+  std::string mode = start > 0 ? "ab" : "wb";
+  FILE* fm = fopen((out + "/meta.txt").c_str(), mode.c_str());
+  FILE* fc = fopen((out + "/corners.txt").c_str(), mode.c_str());
+  if (!fm || !fc) { printf("cannot write into %s\n", out.c_str()); return 1; }
+
+  std::vector<std::string> mv((size_t)count), cv((size_t)count);
+  int kept_total = 0, neg_total = 0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) reduction(+ : kept_total, neg_total)
+#endif
+  for (int i = start; i < start + count; ++i) {
+    Rng rng(seed ^ ((uint64_t)i * 0x9E3779B97F4A7C15ull) ^ 0xD1B54A32D192ED03ull);
+    gen::DetSample d = gen::sample_det(rng, sp, (int)bgs.size(), (int)font_paths.size());
+    gen::apply_share(d, imgsz);
+    gen::place_det(d, imgsz);
+    char name[64];
+    snprintf(name, sizeof name, "det%06d.png", i);
+    std::string bg_name = "synth";
+    if (d.bg_real && !bgs.empty()) {
+      std::string b = bgs[(size_t)d.bg_idx];
+      bg_name = b.substr(b.find_last_of("/\\") + 1);
+    }
+    mv[(size_t)(i - start)] = gen::det_meta(name, d, sp, bg_name, imgsz);
+    cv[(size_t)(i - start)] = gen::det_corners(name, d, imgsz);
+    for (const gen::DetPlate& pl : d.plates) kept_total += pl.keep ? 1 : 0;
+    neg_total += (d.n_plates == 0) ? 1 : 0;
+
+    if (meta_only) continue;
+
+    gen::Img canvas(imgsz, imgsz, {0, 0, 0});
+    bool have_bg = false;
+    if (d.bg_real && !bgs.empty()) {
+      int bw = 0, bh = 0, bc = 0;
+      unsigned char* bi = stbi_load(bgs[(size_t)d.bg_idx].c_str(), &bw, &bh, &bc, 3);
+      if (bi) {                                   // centre-crop to square, then scale to imgsz
+        int side = std::min(bw, bh);
+        int ox = (bw - side) / 2, oy = (bh - side) / 2;
+        for (int y = 0; y < imgsz; ++y)
+          for (int x = 0; x < imgsz; ++x) {
+            int sx = ox + (int)((x + 0.5f) * side / imgsz);
+            int sy = oy + (int)((y + 0.5f) * side / imgsz);
+            sx = std::clamp(sx, 0, bw - 1); sy = std::clamp(sy, 0, bh - 1);
+            const unsigned char* q = &bi[((size_t)sy * bw + sx) * 3];
+            unsigned char* p2 = canvas.at(x, y);
+            p2[0] = q[0]; p2[1] = q[1]; p2[2] = q[2];
+          }
+        stbi_image_free(bi);
+        have_bg = true;
+      }
+    }
+    if (!have_bg) gen::synth_background(canvas, d.bg_hue, d.bg_dark, rng);
+
+    for (gen::DetPlate& pl : d.plates) {
+      gen::Img tex = gen::plate_texture(pl.p, sp, fonts, pl.font_idx % (int)fonts.size(), rng);
+      gen::paste_textured_quad(canvas, tex, pl.quad);
+    }
+
+    gen::Params ph;                               // image-level degradation
+    ph.brightness = d.brightness; ph.contrast = d.contrast; ph.warm = d.warm; ph.noise = d.noise;
+    gen::photometric(canvas, ph, rng);
+    gen::gaussian_blur(canvas, (float)d.blur);
+    gen::motion_blur(canvas, (float)d.motion);
+
+    stbi_write_png((out + "/images/" + name).c_str(), canvas.w, canvas.h, 3, canvas.d.data(), canvas.w * 3);
+    std::string lab = gen::det_labels(d, imgsz);
+    std::string lp = out + "/labels/" + std::string(name).substr(0, strlen(name) - 4) + ".txt";
+    FILE* lf = fopen(lp.c_str(), "wb");
+    if (lf) { fwrite(lab.data(), 1, lab.size(), lf); fclose(lf); }
+  }
+  for (int k = 0; k < count; ++k) {
+    fwrite(mv[(size_t)k].data(), 1, mv[(size_t)k].size(), fm);
+    if (!cv[(size_t)k].empty()) fwrite(cv[(size_t)k].data(), 1, cv[(size_t)k].size(), fc);
+  }
+  fclose(fm); fclose(fc);
+  printf("%s %d frames into %s (imgsz=%d, %d plates kept, %d empty frames, seed=%llu)\n",
+         meta_only ? "meta for" : "wrote", count, out.c_str(), imgsz, kept_total, neg_total,
+         (unsigned long long)seed);
   return 0;
 }
 
@@ -376,6 +507,7 @@ int main(int argc, char** argv) {
   if (cmd == "detect") return cmd_detect(argc, argv);
   if (cmd == "rgba") return cmd_rgba(argc, argv);
   if (cmd == "gen") return cmd_gen(argc, argv);
+  if (cmd == "gen-det") return cmd_gen_det(argc, argv);
   printf("jlpr: '%s' is not implemented yet\n", cmd.c_str());
   return 1;
 }

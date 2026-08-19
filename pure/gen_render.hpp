@@ -300,9 +300,11 @@ inline Img plate_texture(const Params& p, const spec::Spec& sp, const std::vecto
 }
 
 // ---- 3D placement + projection ---------------------------------------------------------------
-struct Quad { float x[4], y[4]; };       // TL, TR, BR, BL
+// double, not float: these numbers are written into corners.txt and compared with the Python
+// generator's, and at 1e-7 a float would round differently in the 5th decimal.
+struct Quad { double x[4], y[4]; };     // TL, TR, BR, BL
 
-inline Quad project_plate(const Params& p, float cx, float cy) {
+inline Quad project_plate(const Params& p, double cx, double cy) {
   const float W_mm = p.large ? 440.f : 330.f, H_mm = p.large ? 220.f : 165.f;
   const double ry = p.yaw * PI / 180, rx = p.pitch * PI / 180, rz = p.roll * PI / 180;
   double c3[4][3];
@@ -332,8 +334,8 @@ inline Quad project_plate(const Params& p, float cx, float cy) {
   Quad q;
   for (int i = 0; i < 4; ++i) {
     double z = dist + c3[i][2];
-    q.x[i] = (float)(cx + f * c3[i][0] / z);
-    q.y[i] = (float)(cy + f * c3[i][1] / z);
+    q.x[i] = cx + f * c3[i][0] / z;
+    q.y[i] = cy + f * c3[i][1] / z;
   }
   return q;
 }
@@ -365,6 +367,85 @@ inline bool quad_to_texture_h(const Quad& q, float tw, float th, double H[9]) {
   for (int i = 0; i < 8; ++i) H[i] = A[i][8] / A[i][i];
   H[8] = 1.0;
   return true;
+}
+
+inline void gaussian_blur(Img& im, float sigma);      // defined below; used by synth_background
+
+// ---- reusable pieces for compositing (used by both the crop generator and gen-det) ----------
+// Paste `tex` into `canvas` through the quad, sampling the texture per destination pixel.
+inline void paste_textured_quad(Img& canvas, const Img& tex, const Quad& q) {
+  double H[9];
+  if (!quad_to_texture_h(q, (float)tex.w, (float)tex.h, H)) return;
+  double minx = q.x[0], maxx = q.x[0], miny = q.y[0], maxy = q.y[0];
+  for (int i = 1; i < 4; ++i) {
+    minx = std::min(minx, q.x[i]); maxx = std::max(maxx, q.x[i]);
+    miny = std::min(miny, q.y[i]); maxy = std::max(maxy, q.y[i]);
+  }
+  for (int y = std::max(0, (int)std::floor(miny)); y <= std::min(canvas.h - 1, (int)std::ceil(maxy)); ++y)
+    for (int x = std::max(0, (int)std::floor(minx)); x <= std::min(canvas.w - 1, (int)std::ceil(maxx)); ++x) {
+      double w = H[6] * x + H[7] * y + H[8];
+      if (std::fabs(w) < 1e-9) continue;
+      double u = (H[0] * x + H[1] * y + H[2]) / w;
+      double v = (H[3] * x + H[4] * y + H[5]) / w;
+      if (u < 0 || v < 0 || u > tex.w - 1 || v > tex.h - 1) continue;
+      float c[3];
+      tex.sample((float)u, (float)v, c);
+      unsigned char* d = canvas.at(x, y);
+      for (int k = 0; k < 3; ++k) d[k] = (unsigned char)std::clamp(c[k], 0.f, 255.f);
+    }
+}
+
+// A car-ish background: hue/darkness base, soft blobs, then blur.
+inline void synth_background(Img& im, double bg_hue, double bg_dark, Rng& rng) {
+  double hue = bg_hue * 6.0;
+  int i = (int)hue;
+  double f = hue - i, v = bg_dark, s = 0.35;
+  double pv = v * (1 - s), qv = v * (1 - s * f), tv = v * (1 - s * (1 - f));
+  double rr, gg, bb;
+  switch (i % 6) {
+    case 0: rr = v; gg = tv; bb = pv; break;
+    case 1: rr = qv; gg = v; bb = pv; break;
+    case 2: rr = pv; gg = v; bb = tv; break;
+    case 3: rr = pv; gg = qv; bb = v; break;
+    case 4: rr = tv; gg = pv; bb = v; break;
+    default: rr = v; gg = pv; bb = qv; break;
+  }
+  for (int y = 0; y < im.h; ++y) {
+    float shade = 0.75f + 0.5f * y / im.h;
+    for (int x = 0; x < im.w; ++x) {
+      unsigned char* d = im.at(x, y);
+      d[0] = (unsigned char)std::clamp(rr * 255 * shade, 0.0, 255.0);
+      d[1] = (unsigned char)std::clamp(gg * 255 * shade, 0.0, 255.0);
+      d[2] = (unsigned char)std::clamp(bb * 255 * shade, 0.0, 255.0);
+    }
+  }
+  int blobs = 14;
+  for (int k = 0; k < blobs; ++k) {
+    float bx = (float)rng.range(-0.1, 1.1) * im.w, by = (float)rng.range(-0.1, 1.1) * im.h;
+    float br = (float)rng.range(0.08, 0.45) * im.w;
+    float a = (float)rng.range(0.05, 0.25);
+    Rgb c{(int)rng.range(0, 255), (int)rng.range(0, 255), (int)rng.range(0, 255)};
+    c.r = (int)(0.6 * c.r + 0.4 * rr * 255); c.g = (int)(0.6 * c.g + 0.4 * gg * 255);
+    c.b = (int)(0.6 * c.b + 0.4 * bb * 255);
+    for (int y = std::max(0, (int)(by - br)); y <= std::min(im.h - 1, (int)(by + br)); ++y)
+      for (int x = std::max(0, (int)(bx - br)); x <= std::min(im.w - 1, (int)(bx + br)); ++x) {
+        float dd = std::sqrt((x - bx) * (x - bx) + (y - by) * (y - by));
+        if (dd <= br) im.blend(x, y, c, a * (1.f - dd / br) * (1.f - dd / br));
+      }
+  }
+  gaussian_blur(im, std::max(1.f, im.w * 0.02f));
+}
+
+// Render one plate at `plate_px` wide, centred on (cx,cy) of `canvas`; returns its 4 corners.
+inline Quad paste_plate(Img& canvas, const Params& p_in, const spec::Spec& sp,
+                        const std::vector<Font>& fonts, int font_idx, double cx, double cy,
+                        double plate_px, Rng& rng) {
+  Params p = p_in;
+  p.plate_px = plate_px;
+  Img tex = plate_texture(p, sp, fonts, font_idx, rng);
+  Quad q = project_plate(p, cx, cy);
+  paste_textured_quad(canvas, tex, q);
+  return q;
 }
 
 // ---- degradation --------------------------------------------------------------------------
@@ -448,88 +529,29 @@ inline Rendered render(const Params& p, const spec::Spec& sp, const std::vector<
   Img tex = plate_texture(p, sp, fonts, font_idx, rng);
 
   const int canvas = std::max(64, (int)std::ceil(p.plate_px * 2.4));
-  const float cx = canvas * 0.5f, cy = canvas * 0.5f;
+  const double cx = canvas * 0.5, cy = canvas * 0.5;
   Quad q = project_plate(p, cx, cy);
 
-  // background: a car-ish gradient plus mild noise
   Img im(canvas, canvas, {0, 0, 0});
-  {
-    double hue = p.bg_hue * 6.0;
-    int i = (int)hue;
-    double f = hue - i, v = p.bg_dark, s = 0.35;
-    double pv = v * (1 - s), qv = v * (1 - s * f), tv = v * (1 - s * (1 - f));
-    double rr, gg, bb;
-    switch (i % 6) {
-      case 0: rr = v; gg = tv; bb = pv; break;
-      case 1: rr = qv; gg = v; bb = pv; break;
-      case 2: rr = pv; gg = v; bb = tv; break;
-      case 3: rr = pv; gg = qv; bb = v; break;
-      case 4: rr = tv; gg = pv; bb = v; break;
-      default: rr = v; gg = pv; bb = qv; break;
-    }
-    for (int y = 0; y < canvas; ++y) {
-      float shade = 0.75f + 0.5f * y / canvas;
-      for (int x = 0; x < canvas; ++x) {
-        unsigned char* d = im.at(x, y);
-        d[0] = (unsigned char)std::clamp(rr * 255 * shade, 0.0, 255.0);
-        d[1] = (unsigned char)std::clamp(gg * 255 * shade, 0.0, 255.0);
-        d[2] = (unsigned char)std::clamp(bb * 255 * shade, 0.0, 255.0);
-      }
-    }
-    // 車体らしさ: 大小のぼんやりした塊を重ねる（バンパーの陰影・映り込みの代用）
-    for (int k = 0; k < 14; ++k) {
-      float bx = (float)rng.range(-0.1, 1.1) * canvas, by = (float)rng.range(-0.1, 1.1) * canvas;
-      float br = (float)rng.range(0.08, 0.45) * canvas;
-      float a = (float)rng.range(0.05, 0.25);
-      Rgb c{(int)rng.range(0, 255), (int)rng.range(0, 255), (int)rng.range(0, 255)};
-      c.r = (int)(0.6 * c.r + 0.4 * rr * 255); c.g = (int)(0.6 * c.g + 0.4 * gg * 255);
-      c.b = (int)(0.6 * c.b + 0.4 * bb * 255);
-      for (int y = std::max(0, (int)(by - br)); y <= std::min(canvas - 1, (int)(by + br)); ++y)
-        for (int x = std::max(0, (int)(bx - br)); x <= std::min(canvas - 1, (int)(bx + br)); ++x) {
-          float dd = std::sqrt((x - bx) * (x - bx) + (y - by) * (y - by));
-          if (dd <= br) im.blend(x, y, c, a * (1.f - dd / br) * (1.f - dd / br));
-        }
-    }
-    gaussian_blur(im, std::max(1.f, canvas * 0.02f));
-  }
+  synth_background(im, p.bg_hue, p.bg_dark, rng);
 
-  // paste the plate through the homography (destination -> texture)
-  double H[9];
-  if (quad_to_texture_h(q, (float)tex.w, (float)tex.h, H)) {
-    float minx = q.x[0], maxx = q.x[0], miny = q.y[0], maxy = q.y[0];
-    for (int i = 1; i < 4; ++i) {
-      minx = std::min(minx, q.x[i]); maxx = std::max(maxx, q.x[i]);
-      miny = std::min(miny, q.y[i]); maxy = std::max(maxy, q.y[i]);
-    }
-    for (int y = std::max(0, (int)std::floor(miny)); y <= std::min(canvas - 1, (int)std::ceil(maxy)); ++y)
-      for (int x = std::max(0, (int)std::floor(minx)); x <= std::min(canvas - 1, (int)std::ceil(maxx)); ++x) {
-        double w = H[6] * x + H[7] * y + H[8];
-        if (std::fabs(w) < 1e-9) continue;
-        double u = (H[0] * x + H[1] * y + H[2]) / w;
-        double v = (H[3] * x + H[4] * y + H[5]) / w;
-        if (u < 0 || v < 0 || u > tex.w - 1 || v > tex.h - 1) continue;
-        float c[3];
-        tex.sample((float)u, (float)v, c);
-        unsigned char* d = im.at(x, y);
-        for (int k = 0; k < 3; ++k) d[k] = (unsigned char)std::clamp(c[k], 0.f, 255.f);
-      }
-  }
+  paste_textured_quad(im, tex, q);
 
   photometric(im, p, rng);
   gaussian_blur(im, (float)p.blur);
   motion_blur(im, (float)p.motion);
 
   // crop: bbox of the corners expanded by margin, offset a little, then resize to out_px
-  float minx = q.x[0], maxx = q.x[0], miny = q.y[0], maxy = q.y[0];
+  double minx = q.x[0], maxx = q.x[0], miny = q.y[0], maxy = q.y[0];
   for (int i = 1; i < 4; ++i) {
     minx = std::min(minx, q.x[i]); maxx = std::max(maxx, q.x[i]);
     miny = std::min(miny, q.y[i]); maxy = std::max(maxy, q.y[i]);
   }
-  float bw = maxx - minx, bh = maxy - miny;
-  float x0 = minx - bw * (float)p.margin + bw * (float)p.off_x;
-  float y0 = miny - bh * (float)p.margin + bh * (float)p.off_y;
-  float x1 = maxx + bw * (float)p.margin + bw * (float)p.off_x;
-  float y1 = maxy + bh * (float)p.margin + bh * (float)p.off_y;
+  double bw = maxx - minx, bh = maxy - miny;
+  double x0 = minx - bw * p.margin + bw * p.off_x;
+  double y0 = miny - bh * p.margin + bh * p.off_y;
+  double x1 = maxx + bw * p.margin + bw * p.off_x;
+  double y1 = maxy + bh * p.margin + bh * p.off_y;
 
   R.crop = Img(out_px, out_px, {0, 0, 0});
   for (int y = 0; y < out_px; ++y)
@@ -542,8 +564,8 @@ inline Rendered render(const Params& p, const spec::Spec& sp, const std::vector<
       for (int k = 0; k < 3; ++k) d[k] = (unsigned char)std::clamp(c[k], 0.f, 255.f);
     }
   for (int i = 0; i < 4; ++i) {
-    R.corners[2 * i] = (q.x[i] - x0) * out_px / (x1 - x0);
-    R.corners[2 * i + 1] = (q.y[i] - y0) * out_px / (y1 - y0);
+    R.corners[2 * i] = (float)((q.x[i] - x0) * out_px / (x1 - x0));
+    R.corners[2 * i + 1] = (float)((q.y[i] - y0) * out_px / (y1 - y0));
   }
 
   // JPEG round trip, so the model sees the artefacts a phone/camera adds
