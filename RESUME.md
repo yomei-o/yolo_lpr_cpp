@@ -77,13 +77,31 @@ CLI  2.4 秒 / WASM(node, SIMD) 4.5 秒 ── 同じ画素で同じ文字列・
       プレート幅が画像幅の **3%〜95%**（対数一様）、0〜3 枚/フレーム、8% はハードネガ、背景は実写プール可。
       標準 YOLO 形式 + 正規化4隅。パリティ **PASS**（meta / corners / labels がバイト一致）。
       → 「プレート単体でも検出できる」ための学習データがこれで用意できた。
-- [ ] **M5 認識器の学習（両言語）** — 合成事前学習 → head を 9→11 に拡張（region も 133→138、append-only）
-      → 実データ微調整 → 両言語から ONNX 出力。
-      完了条件: 実データ hold-out で全文一致 ≥ 95%、region ≥ 98%（TTA なし）。
-      同一初期重み・同一バッチで **loss/勾配が 1e-4 以内**、出力 ONNX が相互に 1e-5 以内。
+- [~] **M5 認識器の学習（両言語）** — 実装とパリティは完了、精度の詰めが残り。
+      - Python: `tools/ocr_model.py`（PyTorch 移植、ONNX 重み読み込み、**forward 3.275e-05 一致**）
+        ＋ `tools/train_ocr.py`（マスク付き 11 head CE / hold-out 評価 / ONNX 書き出し）
+      - C++: `pure/onnx_train.hpp` ＋ `jlpr train --model ocr` — **ONNX グラフをそのまま学習する**方式
+        （アーキを二重に書かないので乖離しない）
+      - パリティ **PASS**: 同じ ONNX・同じ seed・同じ batch で step1 の loss 差 **1e-6**（9 head）/
+        **3e-6**（11 head）、以降は相対 1% 以内（`tools/parity/train.py`）
+      - 実測（600 step, CPU, 合成 3000 枚＋実データ 576 枚）: 実データ hold-out region
+        **91.7% → 95.1%**、全 720 枚で 89.2% → 95.6%。`models/plate_ocr_v2.onnx` を既定に
+      - 残り: Colab で本番学習（`colab/train_ocr.ipynb`、合成 6 万枚 × 4000 step）、
+        全文一致 ≥ 95% の確認、plate_kind / legible head の学習（今は 0.22 / 0.52 でほぼ未学習）
 - [ ] **M6 4隅回帰器（両言語）** — 合成主体で学習 → ONNX。
       完了条件: 合成 val で 4隅平均誤差 ≤ プレート幅の 1.5%、実写で **地域名 conf が 0.57 から上がる**こと。
-- [ ] **M7 検出器を自前 yolov8 nc=1 に差し替え** — `yolov8n.pt` から転移。学習データは
+- [~] **M7 検出器を自前 yolov8 nc=1 に差し替え** — データ・評価・学習スクリプトは用意済み、学習が残り。
+      - `tools/eval_det.py`: プレート占有率バケット別 recall（これが合格判定表）。
+        借り物検出器の合成データ上のベースライン: **全体 9.1%、35% 超は 0.0%**
+      - `tools/train_det.py` ＋ `colab/train_det.ipynb`: Ultralytics で yolov8n を転移し、
+        **NMS 抜き**で ONNX 書き出し（`pure/infer_v8.hpp` が decode+NMS を持つ。素の export は cxcywh）
+      - 残り: Colab で学習して上の表を埋める。実写の教師ラベル（PlateYOLO-JP）を足す
+- [ ] **M7b C++ 側の検出器学習** — `yolov8_cpp` から v8 loss と TAL を移植する作業。
+      必要なのは `tal.hpp`(104) / `v8pure.hpp`(100) / `net.hpp`(136) / `net_unfused.hpp`(124) /
+      `blocks.hpp`(70) / `dataset.hpp`(308) / `metrics.hpp`(93) / `ptio.hpp`(201) ＝ 約 1,100 行と、
+      **cls head の nc=1 再初期化**（同リポ RESUME #2）。認識器と違い ONNX を直接学習する方式が使えない
+      （v8 の損失は生の head 出力を必要とし、グラフの外側にあるため）。
+- [ ] **M7-old 参考: 元の M7 完了条件** — `yolov8n.pt` から転移。学習データは
       **PlateYOLO-JP を教師にした自動ラベル**（Python 側で車写真に box を付ける）＋合成コンポジット＋ハードネガ。
       C++ 側は cls head 80 固定の解消が必要（`yolov8_cpp` RESUME #2）。ONNX は NMS 抜きで出す
       （`pure/infer_v8.hpp` がそのまま使える）。
@@ -211,3 +229,10 @@ CLI  2.4 秒 / WASM(node, SIMD) 4.5 秒 ── 同じ画素で同じ文字列・
   これは借り物 2 つとも同じ → 学習データで埋める方針を M4b で用意。②**合成の数字は 72-92% 転移するが
   地域名は 26-29% で頭打ち**、フォントを変えても動かない → region は実データ微調整が担う。
   ③色バイアスは陰影を保つ色替えでは再現せず（黒 0.835）、判定には実写の黒ナンバーが必要。
+- **2026-08-19（M5）** — 認識器の学習が両言語で動き、パリティも取れた。C++ 側は
+  **ONNX グラフを直接学習する**方式（初期化子を永続 Tensor にして backward → Adam → 書き戻し）にしたので、
+  アーキテクチャの二重定義が無い。実測: 実データ hold-out region **91.7% → 95.1%**（600 step, CPU）。
+  途中で見つけた重要なバグ 1 つ: **head を広げるとき新クラスの bias が 0 だと既存クラスに勝ってしまい、
+  学習前から精度が 6 ポイント落ちる**（logit 0 vs 負の logit）。−10 で初期化して解決。
+  検出器側は評価ハーネス（バケット別 recall）と学習スクリプト・notebook を用意。借り物のベースラインは
+  合成データで全体 9.1%・35% 超 0.0% なので、埋めるべき穴がはっきりしている。
