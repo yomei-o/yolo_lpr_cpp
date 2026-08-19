@@ -38,7 +38,11 @@ sh tools/make_data.sh synth          # 認識器のデータだけ
   （`python tools/parity/gen.py` で検証できる）
 - 書体集合はデータ定義の一部（顔の選択が rng の 29 番目の draw）。`spec/fonts.txt` が契約で、
   ディレクトリが違うと生成器が `note: font set differs from spec/fonts.txt` と言う。
-  Windows の商用書体を足したい場合は `python tools/fetch_fonts.py --include-system`（**出荷モデルとは別のデータになる**）
+  `make_data.sh` は `--fonts-strict`（= `spec/fonts.txt` の 2 書体だけ）で作るので、
+  Windows 商用書体を入れてあるマシンでも**公開されている数字と同じデータ**になる
+- Windows の商用書体（`python tools/fetch_fonts.py --include-system`）は**未見書体での評価**に使う:
+  `sh tools/make_data.sh unseen` → `data/region_sweep_unseen`。学習には使わない（再配布できないので
+  他のマシンで再現できず、公開する数字の根拠にできない）。実測した差は 1.4 ポイントしかない
 - 目安（8 コア、OpenMP 有効）: 合成 3.3 万枚で 10 分前後、検出用 9800 フレームで 15 分前後
 
 ## 3. 学習する

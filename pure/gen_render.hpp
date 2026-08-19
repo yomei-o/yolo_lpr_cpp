@@ -90,7 +90,23 @@ inline bool load_font(const std::string& path, Font& f) {
 }
 
 // The font list is part of the parity contract: same directory, same sorted order, same index draw.
-inline std::vector<std::string> font_files(const std::string& dir, const std::string& only = "") {
+// `manifest` = path to spec/fonts.txt. When given, only the faces it lists are offered, so a machine
+// that also has the proprietary Windows faces installed still reproduces the published datasets
+// instead of quietly generating different pixels from the same seed.
+inline std::vector<std::string> font_files(const std::string& dir, const std::string& only = "",
+                                          const std::string& manifest = "") {
+  std::vector<std::string> listed;
+  if (!manifest.empty()) {
+    std::ifstream in(manifest);
+    std::string line;
+    while (std::getline(in, line)) {
+      size_t h = line.find('#');
+      if (h != std::string::npos) line = line.substr(0, h);
+      while (!line.empty() && (line.back() == 0x0d || line.back() == ' ' || line.back() == '\t'))
+        line.pop_back();
+      if (!line.empty()) listed.push_back(line);
+    }
+  }
   // Fixed list, fixed order: the font index is an rng draw, so both languages must see the
   // same set. Only files that exist are offered, which is why a machine with fewer fonts
   // still generates valid data (it just draws from a shorter list).
@@ -100,6 +116,11 @@ inline std::vector<std::string> font_files(const std::string& dir, const std::st
   std::vector<std::string> out;
   for (const char* c : candidates) {
     if (!only.empty() && only != c) continue;      // --font pins one face (for A/B tests)
+    if (!listed.empty()) {                         // --fonts-strict: manifest only
+      bool ok = false;
+      for (const std::string& l : listed) ok = ok || (l == c);
+      if (!ok) continue;
+    }
     std::string p = dir + "/" + c;
     std::ifstream in(p, std::ios::binary);
     if (in) out.push_back(p);

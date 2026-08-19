@@ -115,7 +115,13 @@ static int cmd_gen(int argc, char** argv) {
   // The font list is drawn from even in --meta-only mode, so the rng stream (and therefore the
   // meta dump) is identical whether or not images are rendered.
   std::string only_font = arg_of(argc, argv, "--font", "");
-  std::vector<std::string> font_paths = gen::font_files(font_dir, only_font);
+  // --fonts-strict: only the faces spec/fonts.txt lists (reproducible datasets on any machine)
+  std::string fmanifest;
+  if (has_flag(argc, argv, "--fonts-strict")) {
+    size_t sl = spec_path.find_last_of("/\\");
+    fmanifest = (sl == std::string::npos ? std::string() : spec_path.substr(0, sl + 1)) + "fonts.txt";
+  }
+  std::vector<std::string> font_paths = gen::font_files(font_dir, only_font, fmanifest);
   std::vector<std::string> font_names;
   for (const std::string& f : font_paths) font_names.push_back(f.substr(f.find_last_of("/\\") + 1));
   if (!quiet) {
@@ -223,7 +229,13 @@ static int cmd_gen_det(int argc, char** argv) {
   bool quiet = has_flag(argc, argv, "--quiet");
 
   spec::Spec sp = spec::load(spec_path);
-  std::vector<std::string> font_paths = gen::font_files(font_dir, only_font);
+  // --fonts-strict: only the faces spec/fonts.txt lists (reproducible datasets on any machine)
+  std::string fmanifest;
+  if (has_flag(argc, argv, "--fonts-strict")) {
+    size_t sl = spec_path.find_last_of("/\\");
+    fmanifest = (sl == std::string::npos ? std::string() : spec_path.substr(0, sl + 1)) + "fonts.txt";
+  }
+  std::vector<std::string> font_paths = gen::font_files(font_dir, only_font, fmanifest);
   if (font_paths.empty()) { printf("no fonts in %s\n", font_dir.c_str()); return 1; }
 
   // Background pool: real photos make the negatives and the context far more honest than a gradient.
