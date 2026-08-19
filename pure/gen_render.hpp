@@ -90,10 +90,11 @@ inline bool load_font(const std::string& path, Font& f) {
 }
 
 // The font list is part of the parity contract: same directory, same sorted order, same index draw.
-inline std::vector<std::string> font_files(const std::string& dir) {
+inline std::vector<std::string> font_files(const std::string& dir, const std::string& only = "") {
   static const char* candidates[] = {"GenSenRounded2-B.ttc", "YuGothB.ttc", "meiryo.ttc", "msgothic.ttc"};
   std::vector<std::string> out;
   for (const char* c : candidates) {
+    if (!only.empty() && only != c) continue;      // --font pins one face (for A/B tests)
     std::string p = dir + "/" + c;
     std::ifstream in(p, std::ios::binary);
     if (in) out.push_back(p);
