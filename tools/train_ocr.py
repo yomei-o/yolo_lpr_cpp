@@ -78,12 +78,14 @@ class SynthSet:
     def __len__(self):
         return len(self.items)
 
-    def get(self, i, rng):
-        path, heads, box = self.items[i]
+    def margin(self, rng):
         # the generator already framed the crop; re-crop around the true box with a random margin so
         # the model sees the same framing jitter a detector will produce
-        margin = rng.range(-0.03, 0.12) if box else 0.0
-        x = load_crop(path, box, margin)
+        return rng.range(-0.03, 0.12)
+
+    def load(self, i, margin):
+        path, heads, box = self.items[i]
+        x = load_crop(path, box, margin if box else 0.0)
         mask = [1] * 11
         if not self.teach_region:
             # Measured (RESUME): synthetic glyphs transfer 72-92%% on digits but only ~28%% on the
@@ -93,6 +95,9 @@ class SynthSet:
             # steps. So region is masked out for synthetic samples unless asked for explicitly.
             mask[0] = 0
         return x, heads, mask
+
+    def get(self, i, rng):
+        return self.load(i, self.margin(rng))
 
 
 class AlprSet:
@@ -130,19 +135,29 @@ class AlprSet:
         self.train_idx = sorted(order[:cut])
         self.val_idx = sorted(order[cut:])
 
-    def get(self, i, rng):
+    def margin(self, rng):
+        return rng.range(-0.02, 0.10)
+
+    def load(self, i, margin):
         path, region = self.items[i][0], self.items[i][1]
-        margin = rng.range(-0.02, 0.10)
         x = load_crop(path, None, margin)
         heads = [0] * 11
         heads[0] = region
         mask = [1] + [0] * 10                           # region only
         return x, heads, mask
 
+    def get(self, i, rng):
+        return self.load(i, self.margin(rng))
 
-def batch_from(sets, weights, batch, rng, spec):
-    xs, ys, ms = [], [], []
+
+def batch_from(sets, weights, batch, rng, spec, pool=None):
+    """Draw the whole batch first, then (optionally) decode the images in parallel.
+
+    The draws stay strictly sequential — set choice, item index, crop margin, in that order — because
+    that order is the contract with the C++ trainer (tools/parity/train.py compares step-by-step
+    losses). Only the file decoding is parallel, and it does not touch the rng."""
     total = sum(weights)
+    plan = []
     for _ in range(batch):
         r = rng.unit() * total
         acc = 0.0
@@ -154,10 +169,15 @@ def batch_from(sets, weights, batch, rng, spec):
                 break
         ds = sets[pick]
         idx = ds.pick(rng)
-        x, heads, mask = ds.get(idx, rng)
-        xs.append(x)
-        ys.append(heads)
-        ms.append(mask)
+        margin = ds.margin(rng)              # drawn here so the sequence is identical either way
+        plan.append((ds, idx, margin))
+    if pool is None:
+        got = [ds.load(idx, margin) for (ds, idx, margin) in plan]
+    else:
+        got = list(pool.map(lambda t: t[0].load(t[1], t[2]), plan))
+    xs = [g[0] for g in got]
+    ys = [g[1] for g in got]
+    ms = [g[2] for g in got]
     x = torch.from_numpy(np.stack(xs)).float()
     return x, torch.tensor(ys, dtype=torch.long), torch.tensor(ms, dtype=torch.float32)
 
@@ -261,6 +281,8 @@ def main():
     ap.add_argument("--save", default="")
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--workers", type=int, default=0,
+                    help="threads for image decoding (draw order is unaffected; 4 is right on Kaggle)")
     ap.add_argument("--no-extra-heads", dest="no_extra", action="store_true",
                     help="keep the original 9 heads (no plate_kind/legible) — needed when the "
                          "parity test compares against a 9-head ONNX")
@@ -319,6 +341,11 @@ def main():
     print("param groups: %d head tensors at lr, %d backbone tensors at lr*%.2f%s"
           % (len(head_params), len(bb_params), a.bb_mult,
              "" if a.train_bn else ", BN statistics frozen"))
+    pool = None
+    if a.workers > 0:
+        from concurrent.futures import ThreadPoolExecutor
+        pool = ThreadPoolExecutor(max_workers=a.workers)
+        print("image decoding on %d threads" % a.workers)
     rng = Rng(a.seed)
     t0 = time.time()
     if alpr:
@@ -335,7 +362,7 @@ def main():
         opt.param_groups[1]["lr"] = lr * a.bb_mult
         if not a.train_bn:
             model.apply(set_bn_eval)
-        x, y, m = batch_from(sets, weights, a.batch, rng, sp)
+        x, y, m = batch_from(sets, weights, a.batch, rng, sp, pool)
         out = model(x.to(a.device))
         loss = multihead_loss(out, order, y.to(a.device), m.to(a.device))
         opt.zero_grad(set_to_none=True)
