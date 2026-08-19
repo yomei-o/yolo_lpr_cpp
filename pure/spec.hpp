@@ -29,6 +29,12 @@ struct Spec {
     if (!g) { printf("spec: no such group '%s'\n", name.c_str()); std::exit(1); }
     return *g;
   }
+  int index_of(const std::string& group, const std::string& token) const {
+    const Group* g = find(group);
+    if (!g) return -1;
+    for (int i = 0; i < g->n; ++i) if (g->tok[i] == token) return i;
+    return -1;
+  }
   std::vector<const Group*> of_kind(const std::string& k) const {
     std::vector<const Group*> v; for (auto& g : groups) if (g.kind == k) v.push_back(&g); return v;
   }

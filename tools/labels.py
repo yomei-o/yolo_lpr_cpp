@@ -38,6 +38,12 @@ class Spec:
             raise KeyError("spec: no such group %r" % name)
         return g
 
+    def index_of(self, group, token):
+        g = self.find(group)
+        if g is None:
+            return -1
+        return g.tok.index(token) if token in g.tok else -1
+
     def of_kind(self, kind):
         return [g for g in self.groups if g.kind == kind]
 

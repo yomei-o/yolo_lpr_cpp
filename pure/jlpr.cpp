@@ -10,11 +10,21 @@
 // build: sh build/gcc.sh pure/jlpr.cpp -o jlpr.exe   |   sh build/cc.sh pure/jlpr.cpp -o jlpr.exe
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_image.h"
 #include "stb_image_write.h"
 #include "spec.hpp"
 #include "onnx_export_lpr.hpp"
 #include "pipeline.hpp"
+#include "gen_render.hpp"
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -52,6 +62,109 @@ static std::string escape_line(const std::string& s) {
     else o += (char)c;
   }
   return o;
+}
+
+static void make_dir(const std::string& d) {
+#ifdef _WIN32
+  _mkdir(d.c_str());
+#else
+  mkdir(d.c_str(), 0755);
+#endif
+}
+
+static int cmd_gen(int argc, char** argv) {
+  std::string out = arg_of(argc, argv, "--out", "data/synth");
+  std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
+  std::string font_dir = arg_of(argc, argv, "--fonts", "fonts");
+  int count = std::atoi(arg_of(argc, argv, "--count", "16").c_str());
+  int start = std::atoi(arg_of(argc, argv, "--start", "0").c_str());
+  int out_px = std::atoi(arg_of(argc, argv, "--out-px", "192").c_str());
+  uint64_t seed = strtoull(arg_of(argc, argv, "--seed", "12345").c_str(), nullptr, 10);
+  bool meta_only = has_flag(argc, argv, "--meta-only");
+  bool tex_dump = has_flag(argc, argv, "--tex-dump");   // also write the flat plate art (debug)
+  bool quiet = has_flag(argc, argv, "--quiet");
+
+  spec::Spec sp = spec::load(spec_path);
+  // The font list is drawn from even in --meta-only mode, so the rng stream (and therefore the
+  // meta dump) is identical whether or not images are rendered.
+  std::vector<std::string> font_paths = gen::font_files(font_dir);
+  std::vector<std::string> font_names;
+  for (const std::string& f : font_paths) font_names.push_back(f.substr(f.find_last_of("/\\") + 1));
+  if (font_paths.empty()) {
+    printf("no fonts in %s — run: python tools/fetch_fonts.py --include-system\n", font_dir.c_str());
+    return 1;
+  }
+  std::vector<gen::Font> fonts;
+  if (!meta_only) {
+    for (const std::string& f : font_paths) {
+      gen::Font fo;
+      if (gen::load_font(f, fo)) fonts.push_back(std::move(fo));
+      else printf("warn: cannot load font %s\n", f.c_str());
+    }
+    if (fonts.empty()) {
+      printf("no fonts in %s — run: python tools/fetch_fonts.py --include-system\n", font_dir.c_str());
+      return 1;
+    }
+  }
+
+  make_dir(out);
+  std::string mode = start > 0 ? "ab" : "wb";
+  FILE* fl = fopen((out + "/labels.txt").c_str(), mode.c_str());
+  FILE* fc = fopen((out + "/corners.txt").c_str(), mode.c_str());
+  FILE* fm = fopen((out + "/meta.txt").c_str(), mode.c_str());
+  if (!fl || !fc || !fm) { printf("cannot write into %s\n", out.c_str()); return 1; }
+
+  // Samples are independent (each has its own rng stream), so this is embarrassingly parallel.
+  // Text output is collected per index and written in order afterwards, so the files are identical
+  // whether the build has OpenMP or not.
+  std::vector<std::string> ml_v((size_t)count), ll_v((size_t)count), cl_v((size_t)count);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+  for (int i = start; i < start + count; ++i) {
+    // Per-sample stream so any range can be generated independently (spec/gen.md).
+    Rng rng(seed ^ ((uint64_t)i * 0x9E3779B97F4A7C15ull));
+    gen::Params p = gen::sample(rng, sp);
+    int font_idx = (int)rng.below((uint64_t)font_names.size());   // draw #29 (spec/gen.md)
+    char name[64];
+    snprintf(name, sizeof name, "plate%06d.png", i);
+
+    ml_v[(size_t)(i - start)] = gen::meta_line(name, p, sp, font_names[font_idx]);
+    ll_v[(size_t)(i - start)] = gen::labels_line(name, p);
+
+    if (meta_only) continue;
+
+    if (tex_dump) {
+      Rng trng(seed ^ ((uint64_t)i * 0x9E3779B97F4A7C15ull));   // same stream, texture only
+      gen::Params tp = gen::sample(trng, sp);
+      (void)trng.below((uint64_t)font_names.size());
+      gen::Img tex = gen::plate_texture(tp, sp, fonts, font_idx, trng);
+      char tn[64];
+      snprintf(tn, sizeof tn, "tex%06d.png", i);
+      stbi_write_png((out + "/" + tn).c_str(), tex.w, tex.h, 3, tex.d.data(), tex.w * 3);
+    }
+    gen::Rendered R = gen::render(p, sp, fonts, font_idx, out_px, rng);
+    stbi_write_png((out + "/" + name).c_str(), R.crop.w, R.crop.h, 3, R.crop.d.data(), R.crop.w * 3);
+    char cl[256];
+    snprintf(cl, sizeof cl, "%s %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %s\n", name,
+             R.corners[0], R.corners[1], R.corners[2], R.corners[3], R.corners[4], R.corners[5],
+             R.corners[6], R.corners[7], R.font.c_str());
+    cl_v[(size_t)(i - start)] = cl;
+    if (!quiet && (i - start) < 12) {
+      std::string t = gen::plate_text(p, sp);
+      printf("  %s  %-28s px=%.0f yaw=%.0f pitch=%.0f blur=%.2f legible=%d font=%s\n", name,
+             t.c_str(), p.plate_px, p.yaw, p.pitch, p.blur, p.legible ? 1 : 0, R.font.c_str());
+    }
+  }
+  for (int k = 0; k < count; ++k) {                 // write in index order, threads or not
+    fwrite(ml_v[(size_t)k].data(), 1, ml_v[(size_t)k].size(), fm);
+    fwrite(ll_v[(size_t)k].data(), 1, ll_v[(size_t)k].size(), fl);
+    if (!cl_v[(size_t)k].empty()) fwrite(cl_v[(size_t)k].data(), 1, cl_v[(size_t)k].size(), fc);
+  }
+  fclose(fl); fclose(fc); fclose(fm);
+  printf("%s %d samples into %s (out_px=%d, seed=%llu)\n", meta_only ? "meta for" : "wrote", count,
+         out.c_str(), out_px, (unsigned long long)seed);
+  return 0;
 }
 
 static int cmd_labels(int argc, char** argv) {
@@ -259,6 +372,7 @@ int main(int argc, char** argv) {
   if (cmd == "parity-ocr") return cmd_parity_ocr(argc, argv);
   if (cmd == "detect") return cmd_detect(argc, argv);
   if (cmd == "rgba") return cmd_rgba(argc, argv);
+  if (cmd == "gen") return cmd_gen(argc, argv);
   printf("jlpr: '%s' is not implemented yet\n", cmd.c_str());
   return 1;
 }
