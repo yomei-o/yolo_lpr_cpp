@@ -9,8 +9,8 @@
 #include <string>
 #include <vector>
 
-static onx::Graph g_det, g_ocr;
-static bool g_det_ok = false, g_ocr_ok = false;
+static onx::Graph g_det, g_ocr, g_corner;
+static bool g_det_ok = false, g_ocr_ok = false, g_corner_ok = false;
 static spec::Spec g_spec;
 static bool g_spec_ok = false;
 static std::string g_result = "{}";
@@ -27,6 +27,14 @@ EMSCRIPTEN_KEEPALIVE int jl_load_ocr(const unsigned char* buf, int len) {
   g_ocr = onx::parse_onnx(buf, (size_t)len);
   g_ocr_ok = !g_ocr.nodes.empty();
   return g_ocr_ok ? (int)g_ocr.nodes.size() : -1;
+}
+
+// The 4-corner regressor (M6). With it loaded, a plate is read from ONE rectified crop instead of
+// six margins — the margin sweep only ever existed because the framing was unknown.
+EMSCRIPTEN_KEEPALIVE int jl_load_corner(const unsigned char* buf, int len) {
+  g_corner = onx::parse_onnx(buf, (size_t)len);
+  g_corner_ok = !g_corner.nodes.empty();
+  return g_corner_ok ? (int)g_corner.nodes.size() : -1;
 }
 
 EMSCRIPTEN_KEEPALIVE int jl_load_spec(const char* text) {
@@ -71,9 +79,16 @@ EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float c
   }
 
   std::vector<jl::Read> reads;
-  for (const jl::Box& b : boxes)
-    reads.push_back(tta ? jl::read_plate_tta(g_ocr, g_spec, rgb.data(), w, h, b.x1, b.y1, b.x2, b.y2)
-                        : jl::read_plate_single(g_ocr, g_spec, rgb.data(), w, h, b.x1, b.y1, b.x2, b.y2));
+  jl::CornerCfg ccfg;
+  for (const jl::Box& b : boxes) {
+    float corners[8];
+    if (g_corner_ok && jl::predict_corners(g_corner, rgb.data(), w, h, b, ccfg, corners)) {
+      reads.push_back(jl::read_plate_warped(g_ocr, g_spec, rgb.data(), w, h, corners, ccfg));
+    } else {
+      reads.push_back(tta ? jl::read_plate_tta(g_ocr, g_spec, rgb.data(), w, h, b.x1, b.y1, b.x2, b.y2)
+                          : jl::read_plate_single(g_ocr, g_spec, rgb.data(), w, h, b.x1, b.y1, b.x2, b.y2));
+    }
+  }
   std::string o = jl::plates_json(boxes, reads);
   g_result = o;
   return (int)boxes.size();
