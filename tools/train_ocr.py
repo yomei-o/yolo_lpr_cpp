@@ -295,6 +295,9 @@ def main():
     ap.add_argument("--eval-every", dest="eval_every", type=int, default=100)
     ap.add_argument("--eval-limit", dest="eval_limit", type=int, default=120)
     ap.add_argument("--export", default="")
+    ap.add_argument("--export-last", dest="export_last", default="",
+                    help="also write the final-step model here (the --export one is the best real "
+                         "hold-out checkpoint, which is usually an earlier step)")
     ap.add_argument("--save", default="")
     ap.add_argument("--keep-last", dest="keep_last", action="store_true",
                     help="export the final weights instead of the best hold-out checkpoint")
@@ -428,6 +431,12 @@ def main():
                         "state": copy.deepcopy({k: v.detach().cpu() for k, v in model.state_dict().items()})}
                 msg += "  <- best"
             print(msg, flush=True)
+
+    if a.export_last:
+        # The best-real-accuracy checkpoint and the last one are not the same model, and which one is
+        # better depends on what you are asking: real accuracy peaks early (step 1000), while the
+        # region names that only synthetic teaches keep improving to the end. Export both and measure.
+        export_onnx(model, order, a.export_last)
 
     if alpr and not a.dump_loss:
         acc, n = eval_region(model, alpr, order, alpr.val_idx, a.device, 0)

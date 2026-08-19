@@ -30,6 +30,11 @@ if [ "$WHAT" = all ] || [ "$WHAT" = synth ]; then
   echo "== recognizer: 30000 train + 2000 val crops"
   $JLPR gen --out data/synth     --count 30000 --seed 90210 --quiet
   $JLPR gen --out data/synth_val --count 2000  --seed 555001 --quiet
+  # Names the real data has none of get oversampled into the SAME directory (--start appends), which
+  # keeps one dataset and one weight: 30000 uniform + 3000 of the five 2025 additions puts them at
+  # ~10% of samples instead of 3.6%. They start from zero weights, so they need the extra exposure.
+  echo "== recognizer: +3000 crops of the 2025 additions (regions 133-137)"
+  $JLPR gen --out data/synth --count 3000 --start 30000 --seed 90210 --region 133-137 --quiet
   echo "== region coverage test set: 2 crops per region name (tools/check_regions.py)"
   $JLPR gen --out data/region_sweep --count 276 --region sweep --seed 4242 --quiet
 fi
