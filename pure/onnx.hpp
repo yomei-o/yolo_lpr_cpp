@@ -180,14 +180,19 @@ inline void parse_graph(RD r, Graph& g) {
     else r.skip(wt);
   }
 }
+// Parse from memory — the browser fetches the .onnx and hands over the bytes (no filesystem).
+inline Graph parse_onnx(const void* data, size_t n) {
+  Graph g; RD r{(const uint8_t*)data, (const uint8_t*)data + n};
+  int fld, wt;
+  while (r.tag(fld, wt)) { if (fld == 7) parse_graph(r.sub(), g); else r.skip(wt); }
+  return g;
+}
+
 inline Graph load_onnx(const std::string& path) {
   std::ifstream f(path, std::ios::binary | std::ios::ate);
   if (!f) { printf("cannot open %s\n", path.c_str()); std::exit(1); }
   auto n = f.tellg(); f.seekg(0); std::string buf(n, '\0'); f.read(buf.data(), n);
-  Graph g; RD r{(const uint8_t*)buf.data(), (const uint8_t*)buf.data() + buf.size()};
-  int fld, wt;
-  while (r.tag(fld, wt)) { if (fld == 7) parse_graph(r.sub(), g); else r.skip(wt); }
-  return g;
+  return parse_onnx(buf.data(), buf.size());
 }
 
 }  // namespace onx
