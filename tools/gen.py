@@ -161,8 +161,18 @@ def meta_line(file, p, sp, font):
                1 if p.frame else 0, p.bg_hue, p.bg_dark, 1 if p.legible else 0, font))
 
 
-def font_files(font_dir, only=""):
-    return [os.path.join(font_dir, c) for c in FONT_CANDIDATES
+def font_files(font_dir, only="", manifest=""):
+    """The faces on offer, in a fixed order — the face is an rng draw, so this list is part of the
+    dataset definition. `manifest` (spec/fonts.txt) restricts it to the set the shipped models were
+    trained with, so a machine that also has the proprietary Windows faces installed can still
+    reproduce the published numbers instead of quietly generating a different dataset."""
+    want = FONT_CANDIDATES
+    if manifest and os.path.exists(manifest):
+        listed = [l.split("#")[0].strip() for l in open(manifest, encoding="utf-8")]
+        listed = [l for l in listed if l]
+        if listed:
+            want = [c for c in FONT_CANDIDATES if c in listed]
+    return [os.path.join(font_dir, c) for c in want
             if (not only or only == c) and os.path.exists(os.path.join(font_dir, c))]
 
 
@@ -401,6 +411,9 @@ def main():
     ap.add_argument("--seed", type=int, default=12345)
     ap.add_argument("--meta-only", dest="meta_only", action="store_true")
     ap.add_argument("--font", default="", help="pin one face, e.g. msgothic.ttc (for A/B tests)")
+    ap.add_argument("--fonts-strict", dest="fonts_strict", action="store_true",
+                    help="use only the faces listed in spec/fonts.txt (what the shipped models were "
+                         "trained with) even if more are installed — needed for reproducible numbers")
     ap.add_argument("--clean", action="store_true", help="no degradation (debug / curriculum)")
     ap.add_argument("--region", default="", help="pin the region name: an index, 'sweep' to cycle "
                     "through every region, or 'a-b' to cycle an inclusive range (e.g. 133-137 = the "
@@ -410,7 +423,8 @@ def main():
     a = ap.parse_args()
 
     sp = L.load(a.spec)
-    font_paths = font_files(a.fonts, a.font)
+    manifest = os.path.join(os.path.dirname(a.spec), "fonts.txt") if a.fonts_strict else ""
+    font_paths = font_files(a.fonts, a.font, manifest)
     if not font_paths:
         raise SystemExit("no fonts in %s — run: python tools/fetch_fonts.py --include-system" % a.fonts)
     font_names = [os.path.basename(f) for f in font_paths]

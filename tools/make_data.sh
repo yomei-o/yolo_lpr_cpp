@@ -15,6 +15,11 @@ set -e
 cd "$(dirname "$0")/.."
 JLPR=${JLPR:-./jlpr}
 [ -x "$JLPR" ] || JLPR=./jlpr.exe
+# --fonts-strict = only the faces in spec/fonts.txt, i.e. exactly what the shipped models were trained
+# with. Without it, a machine that also has the Windows faces installed silently produces a different
+# dataset from the same seed (same labels, different pixels), and the published numbers stop meaning
+# anything. Drop it if you deliberately want more letter shapes — but then re-measure everything.
+STRICT=${STRICT:---fonts-strict}
 WHAT=${1:-all}
 
 # The real data. 720 cropped plates with region labels, plus vehicle photos and plate-free negatives.
@@ -28,15 +33,15 @@ REAL_PLATES='../alpr_jp/自家用,../alpr_jp/自家用(軽),../alpr_jp/事業用
 
 if [ "$WHAT" = all ] || [ "$WHAT" = synth ]; then
   echo "== recognizer: 30000 train + 2000 val crops"
-  $JLPR gen --out data/synth     --count 30000 --seed 90210 --quiet
-  $JLPR gen --out data/synth_val --count 2000  --seed 555001 --quiet
+  $JLPR gen --out data/synth     --count 30000 --seed 90210 $STRICT --quiet
+  $JLPR gen --out data/synth_val --count 2000  --seed 555001 $STRICT --quiet
   # Names the real data has none of get oversampled into the SAME directory (--start appends), which
   # keeps one dataset and one weight: 30000 uniform + 3000 of the five 2025 additions puts them at
   # ~10% of samples instead of 3.6%. They start from zero weights, so they need the extra exposure.
   echo "== recognizer: +3000 crops of the 2025 additions (regions 133-137)"
-  $JLPR gen --out data/synth --count 3000 --start 30000 --seed 90210 --region 133-137 --quiet
+  $JLPR gen --out data/synth --count 3000 --start 30000 --seed 90210 --region 133-137 $STRICT --quiet
   echo "== region coverage test set: 2 crops per region name (tools/check_regions.py)"
-  $JLPR gen --out data/region_sweep --count 276 --region sweep --seed 4242 --quiet
+  $JLPR gen --out data/region_sweep --count 276 --region sweep --seed 4242 $STRICT --quiet
 fi
 
 if [ "$WHAT" = all ] || [ "$WHAT" = det ]; then
@@ -45,7 +50,7 @@ if [ "$WHAT" = all ] || [ "$WHAT" = det ]; then
     # alone taught the detector to look for the drawing, not for a plate (README データ戦略).
     echo "== detector: 9000 train + 800 val frames, 60% real plates"
     $JLPR gen-det --out data/det_train2 --count 9000 --seed 8888 --imgsz 640 \
-      --bg ../alpr_jp/train/neg --real-plates "$REAL_PLATES" --real-pct 60 --quiet
+      --bg ../alpr_jp/train/neg --real-plates "$REAL_PLATES" --real-pct 60 $STRICT --quiet
     $JLPR gen-det --out data/det_val2  --count 800  --seed 9911 --imgsz 640 \
       --bg ../alpr_jp/train/neg --real-plates "$REAL_PLATES" --real-pct 60 --quiet
     # Pseudo-labels: the borrowed PlateYOLO-JP detector labels real vehicle photos for us. 1309 photos
@@ -68,3 +73,13 @@ fi
 echo
 echo "done. sizes:"
 du -sh data/* 2>/dev/null | sort -k2
+
+# Optional extra: the same coverage set rendered in the proprietary Windows faces, which no model here
+# has ever trained on. Measured 2026-08-19: v4 scores 48.9% on the training faces and 47.5% on these,
+# so the typeface gap is 1.4 points — the region head's problem is exposure, not letter shapes. Needs
+# `python tools/fetch_fonts.py --include-system` on a Windows box, so it can never be part of the
+# published, reproducible numbers.
+if [ "$WHAT" = unseen ]; then
+  $JLPR gen --out data/region_sweep_unseen --count 276 --region sweep --seed 4242 --quiet
+  echo "now: python tools/check_regions.py --data data/region_sweep_unseen --ocr models/plate_ocr_v5_last.onnx"
+fi
