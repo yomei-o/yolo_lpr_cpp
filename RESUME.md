@@ -297,6 +297,37 @@ Ultralytics に頼んでいる処方を C++ にも入れた:
 - **WASM**: エンジンを触ったので再ビルドし、`wasm/test_node.js` が CLI と同じ文字列を出すことを確認
   （`横浜 200 か 3591`、det 0.80、1.18 秒/フレーム）。
 
+## 出発点モデルを C++ だけで作れるようにした — 2026-08-20（残差 1 番）
+
+`jlpr train --model det` は既存 ONNX の追加学習しかできず、**最初の 1 個を作る**のだけが Python 専用
+だった。`pure/make_det.hpp` がそのグラフを書く。
+
+```sh
+jlpr init-det --out models/scratch_320.onnx --arch n --nc 1 --imgsz 320            # ランダム初期化
+jlpr init-det --out models/x.onnx --arch n --nc 1 --imgsz 320 --from-pt yolov8n.pt # .pt から転移
+```
+
+作るのは Ultralytics の `export(simplify=True)` と**同じ骨格**（box head を level 方向に concat して
+DFL の softmax へ、cls head は concat して Sigmoid へ、出力は `[1, 4+nc, anchors]` の cxcywh）。
+`det::find_v8_heads` が見つけられる形なのでそのまま学習でき、`pure/infer_v8.hpp` がそのまま復号でき、
+WASM デモにも変換なしで載る。パラメータ名も Ultralytics の state_dict 名にしてあるので、
+`--from-pt` がテンソル単位で載るし、`--freeze N`（`model.<n>.` を見る）もそのまま効く。
+
+検証（yolov8n / nc=1 / 320px、290 ノード・305 重みテンソル・3,011,027 パラメータ）:
+
+| 何を確かめたか | 結果 |
+|---|---|
+| 自作ランタイムで動くか | `jlpr detect` が通る。ランダム初期化なので検出 0 個（cls bias が log(5/nc/(640/s)²) なので初期確率 7e-04） |
+| ONNX として妥当か | `onnx.checker` PASS、onnxruntime で実行可（出力 `[1,5,2100]`） |
+| 学習できるか | `find_v8_heads` が 3 level 分の box/cls を見つけ、183 テンソルを学習対象にして loss が動く |
+| **`.pt` 転移が本物か** | Ultralytics 自身の export と box 行を比較して **max 4.0e-04 px**（343px スケール、中央値 1.5e-05 px）。`tools/parity/init_det.py` |
+| 他のサイズ | `--arch s --imgsz 640` も checker PASS・出力 `[1,5,8400]` |
+
+`.pt` の 297 テンソルのうち **261 が転移し、36 は新規**。新規は全部 `model.22.cv3.*`（クラス分岐）で、
+これは nc に依存する幅だから: nc=80 では中間が max(64, min(80,100)) = 80 チャンネル、nc=1 では 64 で、
+形が違うので載らない。姉妹リポ RESUME の「cls head の nc=1 再初期化」がこれ。
+`init-det` は載らなかった名前を一覧で出すので、黙って落ちることはない。
+
 ## GPU 実機で確認した — 2026-08-20（Kaggle T4、CPU と同値）
 
 前夜の時点では「nvcc でビルドは通るが**実機未確認**」だった。Kaggle の T4（CUDA 12.8 / nvcc 12.8 /
@@ -387,9 +418,9 @@ Python 版は桁違いに多い合成データで回しているので差はデ�
 
 | # | 残っている差 | 中身 | どれくらい効くか |
 |---|---|---|---|
-| 1 | **出発点モデルの調達** | Python は `yolov8n.pt` から転移して ONNX に出せる（`YOLO(...).export(simplify=True)`）。C++ は**既存 ONNX の追加学習しかできない**（`--init` に ONNX が要る）。4隅だけは `--init random` でグラフごと C++ が書ける | 大。検出器を**ゼロから**作る経路が C++ に無い。yolov8 のグラフ生成器（4隅と同じことを 80 ノード規模で）か、`.pt` リーダが要る |
+| ~~1~~ | ~~**出発点モデルの調達**~~ | **解決（2026-08-20）**: `jlpr init-det` が yolov8 グラフを C++ だけで書く（`pure/make_det.hpp`、290 ノード / 305 重みテンソル）。`--from-pt yolov8n.pt` で torch のチェックポイントから転移もできる（`pure/ptio.hpp` = 姉妹リポの純 C++ .pt リーダを移植）。検証は下の節 | — |
 | 2 | **GPU の速度** | 動くことは 2026-08-20 に Kaggle T4 で確認済み（学習・評価・推論の 3 段、CPU と数値一致）。ただし CUDA 経路は **GEMM ごとに host↔device をステージ**する作りなので、検出器の学習で **2.9×**・評価 2.5×・認識器 1.33×・4隅 1.06× が上限 | 中。本番の学習量は結局 Python/GPU が速い。姉妹リポ（lpr_cpp / facenet_cpp）と同じ「活性値を device に置きっぱなしにする forward/backward」を書くのが本筋 |
-| 3 | **学習の運用機能** | `--resume`（optimizer と EMA の状態ごと再開）、早期打ち切り（patience）、CSV / 学習曲線のログ、AMP、multi-scale。Ultralytics は全部持っている | 中。長時間学習を C++ で回すなら必須。短い追加学習なら無くても困らない |
+| ~~3~~ | ~~**学習の運用機能**~~ | **解決（2026-08-20）**: `--resume`（optimizer・EMA・rng・best ごと）／`--stop-at`（綺麗に中断）／`--patience`（早期打ち切り）／`--log`（CSV）を 3 段すべてに実装。`pure/trainrt.hpp`。残るのは AMP と multi-scale だけで、どちらも使っていない | 小。AMP は自作エンジンに fp16 が無いので大仕事、multi-scale は効果未測定 |
 | 4 | **追加のデータ拡張** | mixup / copy-paste / mosaic9 / erasing。`tools/train_det.py` が実際に使っているのは mosaic・fliplr・degrees・scale・translate・hsv・close_mosaic だけで、**それは移植済み** | 小。使っていないものを移植しても数字は動かない |
 | 5 | **EkMixer との比較** | `tools/eval_ocr.py --models ekmixer` は外部モデル（別ラベル空間 `spec/ekmixer_labels.txt`）と読み比べる。C++ は自前モデルのみ | 小。疑似ラベルの第二意見に使うだけ |
 | 6 | **`fetch_fonts.py`** | ネットワークから書体を取ってくる。C++ に HTTP は無いし、入れる気も無い | なし。同梱 2 書体で生成は完結する（`--fonts-strict`） |

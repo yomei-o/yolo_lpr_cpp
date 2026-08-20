@@ -65,6 +65,10 @@ python tools/train_corner.py --synth data/synth --steps 3000 --batch 64 --export
 ./jlpr.exe train --model corner --synth data/synth --steps 3000 --batch 64 \
   --init random --width 24 --export models/plate_corner_new.onnx
 
+# 検出器の出発点を C++ だけで作る（Python も学習済み重みも要らない）
+./jlpr.exe init-det --out models/scratch_320.onnx --arch n --nc 1 --imgsz 320
+./jlpr.exe init-det --out models/tr_320.onnx --arch n --nc 1 --imgsz 320 --from-pt yolov8n.pt
+
 # 検出器（Ultralytics。yolov8n.pt を自動取得。T4 で 28 epoch 約 70 分）
 python tools/train_det.py --data data/det_train2 --data data/det_real --val data/det_val2 \
   --epochs 28 --imgsz 640 --batch 32 \
@@ -76,6 +80,11 @@ python tools/train_det.py --data data/det_train2 --data data/det_real --val data
   --val data/det_val --val-every 200 --epochs 3 --batch 8 \
   --export-best models/plate_det_new_320.onnx --export models/plate_det_new_320_last.onnx
 ./jlpr.exe train --model det --data data/det --check-aug 4 --batch 4    # 箱が画素と一緒に動くか
+
+# 長時間走らせるとき（3 段すべて共通）
+./jlpr.exe train --model det --data data/det --steps 20000 --ckpt run.ckpt --ckpt-every 500   --log run.csv --patience 10 --val data/det_val --val-every 500
+./jlpr.exe train --model det --data data/det --steps 20000 --stop-at 4000 --ckpt run.ckpt  # 途中で止める
+./jlpr.exe train --model det --data data/det --steps 20000 --resume run.ckpt               # 続きから
 ```
 
 学習の設計（どのデータでどの head を学習し、どれをマスクするか）は `pure/train_ocr.hpp` の冒頭コメントと
@@ -93,6 +102,7 @@ python tools/parity/train_det.py --fixture scratch/det_fix.bin           # 検�
 ./jlpr.exe train --model corner --synth data/synth --init models/plate_corner.onnx --steps 1 \
   --batch 8 --dump-fixture scratch/crn_fix.bin
 python tools/parity/train_corner.py --fixture scratch/crn_fix.bin --onnx models/plate_corner.onnx
+python tools/parity/init_det.py --pt yolov8n.pt --imgsz 320   # C++ が書いたグラフ vs ultralytics の export
 ./jlpr.exe val --data ../alpr_jp --kind alpr --holdout --ocr models/plate_ocr_new.onnx   # 実データ hold-out
 python tools/check_regions.py --data data/region_sweep --ocr models/plate_ocr_new.onnx --alpr ../alpr_jp
 ./jlpr.exe check-regions --data data/region_sweep --ocr models/plate_ocr_new.onnx --alpr ../alpr_jp  # 同じ数値
