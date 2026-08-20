@@ -953,7 +953,57 @@ static int cmd_train_corner(int argc, char** argv) {
   Adam opt(t.params, lr0, 0.9f, 0.999f, 1e-8f, wd, true);        // AdamW (decoupled), as in torch
   Rng rng(seed);
   double run = -1;
-  for (int step = 1; step <= steps; ++step) {
+
+  // run plumbing (pure/trainrt.hpp) — same four knobs as `--model det`
+  std::string ckpt_p = arg_of(argc, argv, "--ckpt", "");
+  std::string resume_p = arg_of(argc, argv, "--resume", "");
+  std::string log_p = arg_of(argc, argv, "--log", "");
+  int ckpt_every = std::atoi(arg_of(argc, argv, "--ckpt-every", "0").c_str());
+  int patience = std::atoi(arg_of(argc, argv, "--patience", "0").c_str());
+  int stop_at = std::atoi(arg_of(argc, argv, "--stop-at", "0").c_str());
+  rt::Patience pat(patience, false);                 // corner error: lower is better
+  rt::Log tlog;
+  if (!log_p.empty()) tlog.open(log_p, "step,loss,lr,val_error_pct");
+  int start_step = 0;
+  auto save_ckpt = [&](int step) {
+    if (ckpt_p.empty()) return;
+    rt::Ckpt ck;
+    ck.step = step; ck.total = steps; ck.opt_kind = 2; ck.opt_t = opt.t; ck.rng = rng.s;
+    for (size_t i = 0; i < t.params.size(); ++i)
+      ck.add(t.param_names[i], t.params[i]->data, opt.m[i], opt.v[i]);
+    if (!ck.save(ckpt_p)) printf("warn: cannot write %s\n", ckpt_p.c_str());
+  };
+  if (!resume_p.empty()) {
+    rt::Ckpt ck;
+    std::string why;
+    if (!ck.load(resume_p, &why)) { printf("--resume: %s\n", why.c_str()); return 1; }
+    if (ck.slots.size() != t.params.size()) {
+      printf("--resume: %s has %zu tensors, this model has %zu\n", resume_p.c_str(),
+             ck.slots.size(), t.params.size());
+      return 1;
+    }
+    if (ck.total != 0 && ck.total != (int64_t)steps)
+      printf("warn: checkpoint schedule was %lld steps, --steps is %d — the lr curve will differ\n",
+             (long long)ck.total, steps);
+    for (size_t i = 0; i < ck.slots.size(); ++i) {
+      const rt::Slot& sl = ck.slots[i];
+      if (sl.name != t.param_names[i] || sl.data.size() != t.params[i]->data.size()) {
+        printf("--resume: tensor %zu is %s[%zu], checkpoint has %s[%zu]\n", i,
+               t.param_names[i].c_str(), t.params[i]->data.size(), sl.name.c_str(), sl.data.size());
+        return 1;
+      }
+      t.params[i]->data = sl.data;
+      if (!sl.s1.empty()) opt.m[i] = sl.s1;
+      if (!sl.s2.empty()) opt.v[i] = sl.s2;
+    }
+    opt.t = ck.opt_t;
+    rng.s = ck.rng;
+    start_step = (int)ck.step;
+    printf("resumed %s at step %d (AdamW moments and rng restored)\n", resume_p.c_str(), start_step);
+    if (start_step >= steps) { printf("nothing to do: --steps %d already reached\n", steps); return 0; }
+  }
+
+  for (int step = start_step + 1; step <= steps; ++step) {
     // the Python schedule verbatim: linear warmup over 100 steps, multiplied by a cosine over the run
     const float lr = lr0 * std::min(1.f, (float)step / 100.f) *
                      (0.5f * (1.f + std::cos(3.14159265358979f * (float)step / (float)steps)));
@@ -996,11 +1046,29 @@ static int cmd_train_corner(int argc, char** argv) {
     if (dump_loss) printf("%d %.8f\n", step, lv);
     else if (step % 50 == 0 || step == 1)
       printf("  step %5d/%d  loss %.5f  lr %.2e\n", step, steps, run, lr);
+    double verr = -1;
+    bool stop = false;
     if (!dump_loss && eval_every > 0 && step % eval_every == 0) {
-      printf("  eval @%d: mean corner error %.2f%% of plate width\n", step,
-             100 * crn::eval_error(t, val));
+      verr = 100 * crn::eval_error(t, val);
+      printf("  eval @%d: mean corner error %.2f%% of plate width\n", step, verr);
+      if (pat.done(verr)) {
+        printf("early stop: the corner error has not improved for %d evaluations (best %.2f%%)\n",
+               patience, pat.best);
+        stop = true;
+      }
       fflush(stdout);
     }
+    tlog.row("%d,%.8f,%.3e,%.4f", step, lv, lr, verr);
+    if (!ckpt_p.empty() && (stop || (ckpt_every > 0 && step % ckpt_every == 0))) {
+      save_ckpt(step);
+      if (!dump_loss) printf("  wrote %s (step %d)\n", ckpt_p.c_str(), step);
+    }
+    if (stop_at > 0 && step >= stop_at) {
+      if (!ckpt_p.empty() && ckpt_every <= 0) { save_ckpt(step); printf("  wrote %s (step %d)\n", ckpt_p.c_str(), step); }
+      printf("stopped at step %d of %d (--stop-at)\n", step, steps);
+      return 0;
+    }
+    if (stop) break;
     fflush(stdout);
   }
   if (!dump_loss)
@@ -1139,7 +1207,74 @@ static int cmd_train(int argc, char** argv) {
 
   Rng rng(seed);
   double run_loss = -1;
-  for (int step = 1; step <= steps; ++step) {
+
+  // run plumbing (pure/trainrt.hpp) — same four knobs as `--model det` and `--model corner`.
+  // Two optimizers here (head and backbone), so the checkpoint carries both moment pairs: a tensor is
+  // in exactly one of the two groups, and the group is decided by the same rule on resume.
+  std::string ckpt_p = arg_of(argc, argv, "--ckpt", "");
+  std::string resume_p = arg_of(argc, argv, "--resume", "");
+  std::string log_p = arg_of(argc, argv, "--log", "");
+  int ckpt_every = std::atoi(arg_of(argc, argv, "--ckpt-every", "0").c_str());
+  int patience = std::atoi(arg_of(argc, argv, "--patience", "0").c_str());
+  int stop_at = std::atoi(arg_of(argc, argv, "--stop-at", "0").c_str());
+  rt::Patience pat(patience, true);                       // region accuracy: higher is better
+  rt::Log tlog;
+  if (!log_p.empty()) tlog.open(log_p, "step,loss,lr,real_region,synth_region");
+  int start_step = 0;
+  auto opt_slot = [&](size_t i, std::vector<float>** m, std::vector<float>** v) {
+    for (size_t k = 0; k < head_params.size(); ++k)
+      if (head_params[k] == t.params[i]) { *m = &opt_head.m[k]; *v = &opt_head.v[k]; return; }
+    for (size_t k = 0; k < bb_params.size(); ++k)
+      if (bb_params[k] == t.params[i]) { *m = &opt_bb.m[k]; *v = &opt_bb.v[k]; return; }
+    *m = nullptr; *v = nullptr;
+  };
+  auto save_ckpt = [&](int step) {
+    if (ckpt_p.empty()) return;
+    rt::Ckpt ck;
+    ck.step = step; ck.total = steps; ck.opt_kind = 2; ck.opt_t = opt_head.t;
+    ck.best = best_acc; ck.rng = rng.s;
+    for (size_t i = 0; i < t.params.size(); ++i) {
+      std::vector<float>* m = nullptr;
+      std::vector<float>* v = nullptr;
+      opt_slot(i, &m, &v);
+      ck.add(t.param_names[i], t.params[i]->data, m ? *m : std::vector<float>(),
+             v ? *v : std::vector<float>());
+    }
+    if (!ck.save(ckpt_p)) printf("warn: cannot write %s\n", ckpt_p.c_str());
+  };
+  if (!resume_p.empty()) {
+    rt::Ckpt ck;
+    std::string why;
+    if (!ck.load(resume_p, &why)) { printf("--resume: %s\n", why.c_str()); return 1; }
+    if (ck.slots.size() != t.params.size()) {
+      printf("--resume: %s has %zu tensors, this model has %zu\n", resume_p.c_str(),
+             ck.slots.size(), t.params.size());
+      return 1;
+    }
+    for (size_t i = 0; i < ck.slots.size(); ++i) {
+      const rt::Slot& sl = ck.slots[i];
+      if (sl.name != t.param_names[i] || sl.data.size() != t.params[i]->data.size()) {
+        printf("--resume: tensor %zu is %s[%zu], checkpoint has %s[%zu]\n", i,
+               t.param_names[i].c_str(), t.params[i]->data.size(), sl.name.c_str(), sl.data.size());
+        return 1;
+      }
+      t.params[i]->data = sl.data;
+      std::vector<float>* m = nullptr;
+      std::vector<float>* v = nullptr;
+      opt_slot(i, &m, &v);
+      if (m && !sl.s1.empty()) *m = sl.s1;
+      if (v && !sl.s2.empty()) *v = sl.s2;
+    }
+    opt_head.t = opt_bb.t = ck.opt_t;
+    best_acc = ck.best;
+    rng.s = ck.rng;
+    start_step = (int)ck.step;
+    printf("resumed %s at step %d (AdamW moments of both groups and rng restored)\n",
+           resume_p.c_str(), start_step);
+    if (start_step >= steps) { printf("nothing to do: --steps %d already reached\n", steps); return 0; }
+  }
+
+  for (int step = start_step + 1; step <= steps; ++step) {
     float cur = step <= 1 ? lr : lr;                        // constant lr keeps the parity simple
     opt_head.lr = cur;
     opt_bb.lr = cur * bb_mult;
@@ -1177,6 +1312,24 @@ static int cmd_train(int argc, char** argv) {
         printf("  <- balanced");
       }
       printf("%c", 0x0a);
+      tlog.row("%d,%.6f,%.3e,%.4f,%.4f", step, lv, cur, 100 * acc, syn >= 0 ? 100 * syn : -1.0);
+      if (pat.done(acc)) {
+        printf("early stop: real region accuracy has not improved for %d evaluations (best %.1f%%)\n",
+               patience, 100 * pat.best);
+        if (!ckpt_p.empty()) save_ckpt(step);
+        break;
+      }
+    } else {
+      tlog.row("%d,%.6f,%.3e,,", step, lv, cur);
+    }
+    if (!ckpt_p.empty() && ckpt_every > 0 && step % ckpt_every == 0) {
+      save_ckpt(step);
+      if (!dump_loss) printf("  wrote %s (step %d)\n", ckpt_p.c_str(), step);
+    }
+    if (stop_at > 0 && step >= stop_at) {
+      if (!ckpt_p.empty()) { save_ckpt(step); printf("  wrote %s (step %d)\n", ckpt_p.c_str(), step); }
+      printf("stopped at step %d of %d (--stop-at)\n", step, steps);
+      return 0;
     }
   }
   if (!alpr_val.empty() && !dump_loss) {
