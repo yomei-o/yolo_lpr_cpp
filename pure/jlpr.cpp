@@ -22,6 +22,7 @@
 #include "gen_det.hpp"
 #include "onnx_train.hpp"
 #include "trainrt.hpp"
+#include "make_det.hpp"
 #include "train_ocr.hpp"
 #include "train_det.hpp"
 #include "eval_det.hpp"
@@ -442,6 +443,52 @@ static DetEval eval_det_dir(const onx::Graph& det, jl::DetCfg cfg, const std::st
   }
   e.r = evd::summarize(all, e.n_gt, conf);
   return e;
+}
+
+// jlpr init-det — write a yolov8 detector ONNX from scratch (pure/make_det.hpp), optionally filling it
+// from a torch checkpoint. This is the step that used to require Python: everything downstream
+// (`train --model det`, `val --model det`, `detect`, the WASM demo) already reads this file format.
+static int cmd_init_det(int argc, char** argv) {
+  mkdet::Spec sp;
+  const std::string arch = arg_of(argc, argv, "--arch", "n");
+  sp.arch = arch.empty() ? 'n' : arch[0];
+  sp.nc = std::atoi(arg_of(argc, argv, "--nc", "1").c_str());
+  sp.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "320").c_str());
+  sp.seed = strtoull(arg_of(argc, argv, "--seed", "1234").c_str(), nullptr, 10);
+  const std::string out = arg_of(argc, argv, "--out", "");
+  const std::string from_pt = arg_of(argc, argv, "--from-pt", "");
+  if (out.empty()) {
+    printf("usage: jlpr init-det --out <onnx> [--arch n|s|m|l|x] [--nc 1] [--imgsz 320]\n"
+           "                     [--from-pt yolov8n.pt] [--seed N]\n");
+    return 1;
+  }
+
+  std::map<std::string, pt::Tensor> src;
+  if (!from_pt.empty()) {
+    // yolov8n.pt is a raw checkpoint ({'model': nn.Module, ...}), not a state_dict, so walk the module
+    std::vector<pt::Tensor> ts = pt::load_pt_module(from_pt);
+    if (ts.empty()) ts = pt::load_pt(from_pt);
+    for (pt::Tensor& t : ts) src[t.name] = std::move(t);
+    printf("%s: %zu tensors\n", from_pt.c_str(), src.size());
+  }
+
+  int taken = 0, made = 0;
+  std::vector<std::string> missed;
+  onx::Graph g = mkdet::build(sp, from_pt.empty() ? nullptr : &src, &taken, &made, &missed);
+  onx::save_onnx(g, out);
+  printf("wrote %s: yolov8%c nc=%d imgsz=%d, %zu nodes, %zu weight tensors\n", out.c_str(),
+         sp.arch, sp.nc, sp.imgsz, g.nodes.size(), g.init_f.size());
+  if (!from_pt.empty()) {
+    printf("  %d tensors taken from the checkpoint, %d initialised here\n", taken, made);
+    // Expected misses: the class head cannot transfer when nc differs (80 -> 1), which is exactly the
+    // "cls head の nc=1 再初期化" the sibling repo's RESUME calls out.
+    size_t shown = 0;
+    for (const std::string& m : missed) {
+      if (shown++ < 8) printf("    fresh: %s\n", m.c_str());
+    }
+    if (missed.size() > 8) printf("    ... and %zu more\n", missed.size() - 8);
+  }
+  return 0;
 }
 
 // jlpr train --model det --gradcheck — the analytic gradient of the fused v8 loss against a central
@@ -2207,6 +2254,7 @@ int main(int argc, char** argv) {
   if (cmd == "rgba") return cmd_rgba(argc, argv);
   if (cmd == "gen") return cmd_gen(argc, argv);
   if (cmd == "gen-det") return cmd_gen_det(argc, argv);
+  if (cmd == "init-det") return cmd_init_det(argc, argv);
   if (cmd == "train") return cmd_train(argc, argv);
   if (cmd == "val") return cmd_val(argc, argv);
   if (cmd == "pseudo-label") return cmd_pseudo_label(argc, argv);
