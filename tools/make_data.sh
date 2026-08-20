@@ -82,5 +82,5 @@ du -sh data/* 2>/dev/null | sort -k2
 # published, reproducible numbers.
 if [ "$WHAT" = unseen ]; then
   $JLPR gen --out data/region_sweep_unseen --count 276 --region sweep --seed 4242 --quiet
-  echo "now: python tools/check_regions.py --data data/region_sweep_unseen --ocr models/plate_ocr_v5_last.onnx"
+  echo "now: python tools/check_regions.py --data data/region_sweep_unseen --ocr models/plate_ocr_v6_last.onnx"
 fi

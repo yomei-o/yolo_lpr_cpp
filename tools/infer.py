@@ -396,7 +396,7 @@ def main(argv):
     ap = argparse.ArgumentParser(prog="infer.py")
     ap.add_argument("--img", required=True)
     ap.add_argument("--det", default=os.path.join(ROOT, "models", "plate_det_pyj320.onnx"))
-    ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr_v2.onnx"))
+    ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr_v7_bal.onnx"))
     ap.add_argument("--spec", default=os.path.join(ROOT, "spec", "labels.txt"))
     ap.add_argument("--out", default="")
     ap.add_argument("--conf", type=float, default=0.30)
