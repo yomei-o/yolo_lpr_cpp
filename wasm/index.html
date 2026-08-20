@@ -32,8 +32,10 @@
 <p class="sub">
   検出 → 4隅補正 → 位置別 11 head 分類。ONNX を fetch して WASM で推論し、<b>画像はどこにも送信されません</b>。
   <b>検出器も認識器も自前で学習したモデル</b>（検出 mAP50 0.985 / 認識は実データ hold-out の地域名 97.9%）。<br>
-  検出器は 3 つから選べます。<b>自前 320</b> は近接（プレート単体・車体が写っていなくても取れる）、
-  <b>自前 640</b> は遠くの小さいプレートも拾えるが 4 倍重い、<b>借り物</b>（PlateYOLO-JP）は遠景が得意です。<br>
+  検出器は 3 つから選べます。既定は<b>自前 640</b>（近接も遠景も取れるが重い — 1 フレーム 5 秒前後。
+  カメラで気持ちよく回したいときは 320 に落とすと 0.5 秒前後になります）。
+  <b>自前 320</b> は 4 倍軽くて近接に強い代わりに画面 10% 前後の遠景を落とし、
+  <b>借り物</b>（PlateYOLO-JP）は比較用（遠景は得意、近接は検出ゼロ）。<br>
   「<b>自動スキャン</b>」を押すとカメラを見続け、プレートが現れたら自動で読みます。同じプレートを追跡している間は
   フレームをまたいで確率を足し込むので、<b>見続けるほど読みが安定します</b>（確定すると緑）。
 </p>
@@ -51,9 +53,9 @@
 <div class="row">
   <label>検出器
     <select id="detsel">
-      <option value="pyj">PlateYOLO-JP 320（借り物・車ごと写す用）</option>
-      <option value="v8n">自前 yolov8n 320（プレート単体・近接に強い）</option>
-      <option value="v8n640">自前 yolov8n 640（遠くの小さいプレートも／4倍重い）</option>
+      <option value="v8n640">自前 yolov8n 640（既定・近接も遠景も／重い）</option>
+      <option value="v8n">自前 yolov8n 320（軽い・近接に強い／遠景を落とす）</option>
+      <option value="pyj">PlateYOLO-JP 320（借り物・比較用）</option>
     </select>
   </label>
   <label>認識器
@@ -82,12 +84,14 @@ const cv = $('cv'), ctx = cv.getContext('2d', { willReadFrequently: true });
 const ov = $('overlay'), octx = ov.getContext('2d');
 const log = (s) => { const l = $('log'); l.textContent += "\n" + s; l.scrollTop = l.scrollHeight; };
 
+// Order here follows the <select>: the first entry is what the page loads on open. The default is
+// ours at 640 — a demo of this project should run this project's detector, and 640 is the one that
+// covers both ends (data/det_eval recall 97.1%, and the only one of the three that finds a plate
+// occupying ~10% of the frame). 320 is there for speed, the borrowed model for comparison.
 const DETECTORS = {
+  v8n640: { path: '../models/plate_det_v8n_640.onnx', kind: 2, label: '自前 yolov8n 640（既定）' },
+  v8n: { path: '../models/plate_det_v8n_320.onnx', kind: 2, label: '自前 yolov8n 320（軽い）' },
   pyj: { path: '../models/plate_det_pyj320.onnx', kind: 1, label: 'PlateYOLO-JP 320（借り物）' },
-  v8n: { path: '../models/plate_det_v8n_320.onnx', kind: 2, label: '自前 yolov8n 320（近接に強い）' },
-  // 640 costs ~4x the detector time but is the only one of the three that finds a plate occupying
-  // ~10% of the frame (measured: bus photo, 320 -> nothing, 640 -> 0.41, borrowed -> 0.80).
-  v8n640: { path: '../models/plate_det_v8n_640.onnx', kind: 2, label: '自前 yolov8n 640（遠景も／重い）' },
 };
 // Two recognisers, because the trade-off is real and small enough to let the user pick. Measured on
 // 144 real hold-out crops and 100 synthetic crops of the five names added in 2025:
