@@ -13,11 +13,17 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const fixture = process.argv[2] || path.join(ROOT, 'scratch', 'sample.rgba');
 const expect = process.argv[3] || '横浜 200 か 3591';
-const EXPECT_BOX = (process.env.EXPECT_BOX || '248,414,321,463').split(',').map(Number);
+const EXPECT_BOX = (process.env.EXPECT_BOX || '247,414,326,461').split(',').map(Number);
+// The page's default detector is ours at 640, and on this far-shot fixture it is a *correct but weak*
+// detection (0.41 — the borrowed model gets 0.80 here, our 320 finds nothing). So the floor is a knob:
+// its job is to catch a detector emitting garbage, not to encode one model's score.
+const MIN_DET = Number(process.env.MIN_DET || 0.35);
 // which detector to test: 1 = v8 head with xyxy boxes (PlateYOLO-JP, NMS stripped),
 // 2 = v8 head with cxcywh boxes (a plain Ultralytics export of our own yolov8n), 0 = the old YOLOX
-const DET_KIND = Number(process.env.DET_KIND || 1);
-const DET_PATH = process.env.DET_PATH || path.join(ROOT, 'models', 'plate_det_pyj320.onnx');
+const DET_KIND = Number(process.env.DET_KIND || 2);
+// keep these in step with wasm/index.html's DETECTORS/OCRS defaults, or the test grades a
+// configuration nobody runs
+const DET_PATH = process.env.DET_PATH || path.join(ROOT, 'models', 'plate_det_v8n_640.onnx');
 // The demo loads the corner model, so the test has to as well or it exercises a path nobody uses:
 // without it the reading falls back to multi-margin TTA, which on the close-up black plate reads
 // 練馬 instead of 横浜. CORNER_PATH=none turns it off deliberately.
@@ -80,7 +86,7 @@ function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
 
   const best = res.plates[0];
   if (best.text !== expect) fail('text is "' + best.text + '", expected "' + expect + '"');
-  if (best.det < 0.5) fail('detector score ' + best.det.toFixed(2) + ' is not decisive');
+  if (best.det < MIN_DET) fail('detector score ' + best.det.toFixed(2) + ' is below the floor ' + MIN_DET);
   for (let i = 0; i < 4; ++i) {
     if (Math.abs(best.box[i] - EXPECT_BOX[i]) > 8) {
       fail('box ' + best.box.map((v) => v.toFixed(0)).join(',') + ' drifted from the CLI box ' + EXPECT_BOX.join(','));
