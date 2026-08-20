@@ -19,7 +19,7 @@ Three things were measured, not assumed, and each one changed the recipe:
     do not drift toward the synthetic font.
 
   python tools/train_ocr.py --synth data/synth --alpr <alpr_jp root> --steps 2000 --batch 32
-  python tools/train_ocr.py ... --export models/plate_ocr_v2.onnx
+  python tools/train_ocr.py ... --export models/plate_ocr_new.onnx
 """
 import argparse
 import math

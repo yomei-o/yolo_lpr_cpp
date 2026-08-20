@@ -7,7 +7,7 @@ synthetic crops normally have the region loss masked out. That combination left 
 one clean-ish plate per region name and asks the model to read it back.
 
   python tools/gen.py --out data/region_sweep --count 414 --region sweep --seed 4242
-  python tools/check_regions.py --data data/region_sweep --ocr models/plate_ocr_v3.onnx
+  python tools/check_regions.py --data data/region_sweep --ocr models/plate_ocr_v7_bal.onnx
 
 A synthetic render is an easy test (the glyphs come from the same font list the training data used),
 so treat the numbers as "is this class reachable at all", not as real-world accuracy. What matters:
@@ -35,7 +35,7 @@ NEW_2025 = ["十勝", "日光", "江戸川", "安曇野", "南信州"]
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True, help="a sweep set from `--region sweep`")
-    ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr_v2.onnx"))
+    ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr_v7_bal.onnx"))
     ap.add_argument("--spec", default=os.path.join(ROOT, "spec", "labels.txt"))
     ap.add_argument("--alpr", default="", help="real data root: splits the report into names real "
                                                "photos cover and names only synthetic covers")

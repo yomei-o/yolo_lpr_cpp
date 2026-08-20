@@ -219,7 +219,7 @@ Python/CUDA が現実的で、C++ 側は**同じ結果に到達できること�
 | | 実データ hold-out region top1 |
 |---|---|
 | 出荷済みの重み | 91.7% |
-| **600 step 学習後（`plate_ocr_v2.onnx`）** | **95.1%** |
+| **600 step 学習後（当時の `plate_ocr_v2`）** | **95.1%** |
 
 学習前に見つけて直したこと（数字が出たので分かった）:
 - **region を 133→138 に広げるとき、新クラスの bias が 0 だと既存クラスに勝ってしまう**
@@ -292,11 +292,11 @@ curl -s localhost:8787/gpu            # -> Tesla T4 x2, torch 2.10+cu128
 curl -s -X POST localhost:8787/job -d '{"name":"prep","cmd":"cd /kaggle/working &&   git clone -q --depth 1 https://github.com/yomei-o/yolo_lpr_cpp.git && cd yolo_lpr_cpp &&   python tools/fetch_fonts.py --include-system &&   g++ -std=c++20 -O2 -fopenmp -Ipure -Ipure/third_party pure/jlpr.cpp -o jlpr &&   git clone -q --depth 1 https://github.com/dyama/alpr_jp.git ../alpr_jp &&   ./jlpr gen --out data/synth --count 30000 --seed 90210 --quiet"}'
 
 # 学習（GPU）。ログは何度でも増分で読める
-curl -s -X POST localhost:8787/job -d '{"name":"ocr","cmd":"cd /kaggle/working/yolo_lpr_cpp &&   python tools/train_ocr.py --synth data/synth --alpr ../alpr_jp --steps 4000 --batch 64   --workers 4 --export models/plate_ocr_v2.onnx"}'
+curl -s -X POST localhost:8787/job -d '{"name":"ocr","cmd":"cd /kaggle/working/yolo_lpr_cpp &&   python tools/train_ocr.py --synth data/synth --alpr ../alpr_jp --steps 4000 --batch 64   --workers 4 --export models/plate_ocr_new.onnx"}'
 curl -s "localhost:8787/job/<id>/log?offset=0"
 
 # 成果物を回収
-curl -s "localhost:8787/download?path=yolo_lpr_cpp/models/plate_ocr_v2.onnx" -o models/plate_ocr_v2.onnx
+curl -s "localhost:8787/download?path=yolo_lpr_cpp/models/plate_ocr_new.onnx&raw=1" -o models/plate_ocr_new.onnx
 ```
 
 Kaggle 側の実測（無料枠 T4×2 / 4 vCPU）: 合成生成 **0.06 秒/枚**（4 コア）、認識器の学習は GPU なら
@@ -416,7 +416,7 @@ C++ 側にも入れた: **mosaic（4枚を 2S キャンバス）＋回転/拡大
 | 認識器 | region top1（1クロップ） | region top1（6クロップTTA） | top3(TTA) |
 |---|---|---|---|
 | 自前 `plate_ocr`（`lpr_cpp` 由来・128ch dwsep-ResNet, 1.3MB） | 89.2% | 92.5% | 96.1% |
-| **`plate_ocr_v2`（M5 で学習したもの・現行の既定）** | **95.6%** | — | 98.6% |
+| **`plate_ocr_v7_bal`（現行の既定）** | **95.6%**（当時の `plate_ocr_v2` で測った値） | — | 98.6% |
 | EkMixer（PlateYOLO-JP 同梱・1.0MB） | 76.1% | 81.2% | 88.2% |
 
 → **自前を base に微調整する**方針で確定（M5）。EkMixer は捨てずに疑似ラベルの第二意見として使う
@@ -465,7 +465,7 @@ wasm/      jlpr_wasm.cpp + index.html + test_node.js  ✅（カメラ/ファイ�
 | プレート色バイアスの再現は方法依存 | 同じ写真で色だけ変える試験（`tools/recolor_test.py`、陰影を保つ置換）では **白 0.796 / 緑 0.799 / 黄 0.721 / 黒 0.835**。旧 YOLOX でも同じ方法なら 0.80/0.72/0.645/0.720 で、lpr_cpp が報告した黒 0.21 は再現しない | 色バイアスの判定は**実写の黒/黄ナンバー**で行う。合成的な色替えは陰影が残るので簡単すぎる |
 | 自作 ONNX インタプリタの float 誤差 | 認識器 3.3e-05 / 検出器 3e-03（onnxruntime は同じ ONNX で 7.5e-09） | 強い検出には影響しないが、閾値ぎりぎりの box では読みが両実装で割れる。パリティテストの許容幅はそれを前提に設定 |
 | ネガだけのテスト | 灰色一枚で box 0 件 → 検出器が壊れていても通る | 実写フィクスチャで位置・スコアの決定性・散らばりの無さを assert |
-| 合成の指標で採否を決める | 4隅回帰を作り直して合成 val 誤差 1.93% → 1.89% と改善したのに、実写では地名確信度 0.94 → 0.75 と**悪化**（`plate_corner_v2.onnx`、採用せず） | モデルの採否は必ず**実写**で決める。合成の指標は「学習が進んでいるか」までしか言えない |
+| 合成の指標で採否を決める | 4隅回帰を作り直して合成 val 誤差 1.93% → 1.89% と改善したのに、実写では地名確信度 0.94 → 0.75 と**悪化**（採用せず。作り直せる物なのでリポジトリからは削除した） | モデルの採否は必ず**実写**で決める。合成の指標は「学習が進んでいるか」までしか言えない |
 | Kaggle 側で `git pull` が中断する | 学習が書いた `models/*.onnx` が未追跡のまま残り、`untracked working tree files would be overwritten by merge` で job が即死（3回踏んだ） | 学習 job の先頭を必ず `git checkout -- models/; git clean -fdq models/; git pull` にする |
 | Ultralytics の ONNX を `simplify=False` で出す | グラフに Shape/Gather が残り、自作インタプリタが `tensor '/model.22/Gather_output_0' is missing` で停止（onnxruntime は読める） | 検出器の export は必ず `simplify=True`（onnxslim が畳んでくれる）。読めるかどうかは **自作ランタイムで実写1枚**流して確認 |
 | 重みの保存先を自分で組み立てる | `project/name/weights/best.pt` を組み立てていたが Ultralytics の settings が runs_dir を前置しており、71 分の学習の**直後に** export だけ FileNotFoundError で落ちた | `model.trainer.best` に聞く。長い学習には `--export-only` のような再開口を用意しておく |

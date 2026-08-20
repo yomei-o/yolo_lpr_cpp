@@ -21,6 +21,7 @@
 #include "gen_render.hpp"
 #include "gen_det.hpp"
 #include "onnx_train.hpp"
+#include "trainrt.hpp"
 #include "train_ocr.hpp"
 #include "train_det.hpp"
 #include "eval_det.hpp"
@@ -534,6 +535,15 @@ static int cmd_train_det(int argc, char** argv) {
   std::string out_best = arg_of(argc, argv, "--export-best", "");
   std::string fixture = arg_of(argc, argv, "--dump-fixture", "");
   std::string optim = arg_of(argc, argv, "--optim", "sgd");
+  // run plumbing (pure/trainrt.hpp): a long run must be resumable, stoppable and reviewable
+  std::string ckpt_p = arg_of(argc, argv, "--ckpt", "");
+  std::string resume_p = arg_of(argc, argv, "--resume", "");
+  std::string log_p = arg_of(argc, argv, "--log", "");
+  int ckpt_every = std::atoi(arg_of(argc, argv, "--ckpt-every", "0").c_str());
+  int patience = std::atoi(arg_of(argc, argv, "--patience", "0").c_str());
+  // Stop cleanly at a step and checkpoint. Written for the wall clock: a Kaggle session dies at 9
+  // hours, so "run 4000 steps of a 20000-step schedule, then resume tomorrow" has to be expressible.
+  int stop_at = std::atoi(arg_of(argc, argv, "--stop-at", "0").c_str());
   int imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "0").c_str());
   int steps = std::atoi(arg_of(argc, argv, "--steps", "30").c_str());
   int epochs = std::atoi(arg_of(argc, argv, "--epochs", "0").c_str());
@@ -599,6 +609,7 @@ static int cmd_train_det(int argc, char** argv) {
   // --freeze N: hold the first N `model.<i>.` modules still, the same way Ultralytics' --freeze does.
   // The tensors stay in the graph (and in write_back); they just leave the optimiser.
   std::vector<Tensor> opt_params;
+  std::vector<std::string> opt_names;
   int frozen = 0;
   for (size_t i = 0; i < t.params.size(); ++i) {
     bool hold = false;
@@ -610,7 +621,7 @@ static int cmd_train_det(int argc, char** argv) {
         hold = mod < freeze;
       }
     }
-    if (hold) ++frozen; else opt_params.push_back(t.params[i]);
+    if (hold) ++frozen; else { opt_params.push_back(t.params[i]); opt_names.push_back(t.param_names[i]); }
   }
 
   if (!dump_loss) {
@@ -711,6 +722,7 @@ static int cmd_train_det(int argc, char** argv) {
     fn();
     if (!no_ema) ema.swap();
   };
+  float last_map50 = -1.f, last_map5095 = -1.f;
   auto validate = [&](int step) {
     if (valdir.empty()) return;
     with_ema([&] {
@@ -728,7 +740,75 @@ static int cmd_train_det(int argc, char** argv) {
     fflush(stdout);
   };
 
-  for (int step = 0; step < steps; ++step) {
+  // --- run plumbing: checkpoint / resume / early stop / csv log (pure/trainrt.hpp) ---------------
+  rt::Patience pat(patience, true);                      // mAP50-95: higher is better
+  rt::Log tlog;
+  if (!log_p.empty()) tlog.open(log_p, "step,loss,box,cls,dfl,fg,lr,val_map50,val_map5095");
+  int start_step = 0;
+  auto save_ckpt = [&](int step) {
+    if (ckpt_p.empty()) return;
+    rt::Ckpt ck;
+    ck.step = step;
+    ck.total = steps;
+    ck.opt_kind = use_sgd ? 1 : 2;
+    ck.opt_t = use_sgd ? (sgd.started ? 1 : 0) : adam.t;
+    ck.ema_updates = ema.updates;
+    ck.best = best_map;
+    ck.rng = rng.s;
+    // every trainable tensor's weights, plus the optimizer moment(s) and the EMA shadow for the ones
+    // that have them — resuming from weights alone would restart momentum at zero
+    for (size_t i = 0; i < t.params.size(); ++i) {
+      std::vector<float> s1, s2, sh;
+      for (size_t k = 0; k < opt_params.size(); ++k)
+        if (opt_params[k] == t.params[i]) {
+          if (use_sgd) s1 = sgd.buf[k];
+          else { s1 = adam.m[k]; s2 = adam.v[k]; }
+          break;
+        }
+      if (!no_ema && i < ema.shadow.size()) sh = ema.shadow[i];
+      ck.add(t.param_names[i], t.params[i]->data, s1, s2, sh);
+    }
+    if (!ck.save(ckpt_p)) printf("warn: cannot write %s\n", ckpt_p.c_str());
+  };
+  if (!resume_p.empty()) {
+    rt::Ckpt ck;
+    std::string why;
+    if (!ck.load(resume_p, &why)) { printf("--resume: %s\n", why.c_str()); return 1; }
+    if (ck.slots.size() != t.params.size()) {
+      printf("--resume: %s has %zu tensors, this model has %zu\n", resume_p.c_str(), ck.slots.size(),
+             t.params.size());
+      return 1;
+    }
+    for (size_t i = 0; i < ck.slots.size(); ++i) {
+      const rt::Slot& sl = ck.slots[i];
+      if (sl.name != t.param_names[i] || sl.data.size() != t.params[i]->data.size()) {
+        printf("--resume: tensor %zu is %s[%zu], checkpoint has %s[%zu]\n", i,
+               t.param_names[i].c_str(), t.params[i]->data.size(), sl.name.c_str(), sl.data.size());
+        return 1;
+      }
+      t.params[i]->data = sl.data;
+      if (!no_ema && i < ema.shadow.size() && !sl.ema.empty()) ema.shadow[i] = sl.ema;
+      for (size_t k = 0; k < opt_params.size(); ++k)
+        if (opt_params[k] == t.params[i]) {
+          if (use_sgd) { if (!sl.s1.empty()) sgd.buf[k] = sl.s1; }
+          else { if (!sl.s1.empty()) adam.m[k] = sl.s1; if (!sl.s2.empty()) adam.v[k] = sl.s2; }
+          break;
+        }
+    }
+    if (ck.total != 0 && ck.total != (int64_t)steps)
+      printf("warn: this checkpoint was written by a %lld-step schedule and --steps is %d — the lr "
+             "curve will differ from an uninterrupted run\n", (long long)ck.total, steps);
+    if (use_sgd) sgd.started = ck.opt_t != 0; else adam.t = ck.opt_t;
+    ema.updates = ck.ema_updates;
+    best_map = (float)ck.best;
+    rng.s = ck.rng;
+    start_step = (int)ck.step;
+    printf("resumed %s at step %d (best mAP50-95 %.4f, optimizer and EMA state restored)\n",
+           resume_p.c_str(), start_step, best_map);
+    if (start_step >= steps) { printf("nothing to do: --steps %d already reached\n", steps); return 0; }
+  }
+
+  for (int step = start_step; step < steps; ++step) {
     // schedule: linear warmup (momentum too, as Ultralytics does), then linear or cosine decay to
     // lr0*lrf. Both are computed per step rather than per epoch because this trainer counts steps.
     const float x = (float)step / (float)std::max(1, steps);
@@ -788,8 +868,31 @@ static int cmd_train_det(int argc, char** argv) {
     if (use_sgd) sgd.step(); else adam.step();
     if (!no_ema) ema.update();
     free_graph(loss);
-    if (val_every > 0 && (step + 1) % val_every == 0) validate(step + 1);
+    bool stop = false;
+    if (val_every > 0 && (step + 1) % val_every == 0) {
+      last_map50 = last_map5095 = -1.f;
+      validate(step + 1);
+      if (last_map5095 >= 0.f && pat.done(last_map5095)) {
+        printf("early stop: mAP50-95 has not improved for %d validations (best %.4f at step %d)\n",
+               patience, best_map, best_step);
+        stop = true;
+      }
+    }
+    tlog.row("%d,%.6f,%.6f,%.6f,%.6f,%d,%.3e,%.4f,%.4f", step, rep.total, rep.box, rep.cls, rep.dfl,
+             rep.fg, lr, last_map50, last_map5095);
+    if (!ckpt_p.empty() && (stop || (ckpt_every > 0 && (step + 1) % ckpt_every == 0))) {
+      save_ckpt(step + 1);
+      printf("  wrote %s (step %d)\n", ckpt_p.c_str(), step + 1);
+    }
+    if (stop_at > 0 && step + 1 >= stop_at) {
+      if (!ckpt_p.empty()) { save_ckpt(step + 1); printf("  wrote %s (step %d)\n", ckpt_p.c_str(), step + 1); }
+      printf("stopped at step %d of %d (--stop-at); resume with --resume %s --steps %d\n", step + 1,
+             steps, ckpt_p.empty() ? "<ckpt>" : ckpt_p.c_str(), steps);
+      return 0;
+    }
+    if (stop) { steps = step + 1; break; }
   }
+  if (!ckpt_p.empty()) save_ckpt(steps);
   if (!valdir.empty() && (val_every <= 0 || steps % val_every != 0)) validate(steps);   // final
 
   if (!out_best.empty() && !best_snap.empty()) {
@@ -1182,7 +1285,7 @@ static int cmd_val_det(int argc, char** argv) {
 // the corner net), same numbers — so a model can be judged with no Python anywhere in the loop.
 static int cmd_val(int argc, char** argv) {
   if (arg_of(argc, argv, "--model", "ocr") == "det") return cmd_val_det(argc, argv);
-  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v2.onnx");
+  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v7_bal.onnx");
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string data = arg_of(argc, argv, "--data", "");
   std::string kind = arg_of(argc, argv, "--kind", "alpr");
@@ -1394,7 +1497,7 @@ static int cmd_pseudo_label(int argc, char** argv) {
 // fonts as training); it answers "is this class reachable", not "how good is it in the wild".
 static int cmd_check_regions(int argc, char** argv) {
   std::string data = arg_of(argc, argv, "--data", "");
-  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v2.onnx");
+  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v7_bal.onnx");
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string alpr = arg_of(argc, argv, "--alpr", "");    // which names real data covers
   int limit = std::atoi(arg_of(argc, argv, "--limit", "0").c_str());
@@ -1828,7 +1931,7 @@ static int cmd_rgba(int argc, char** argv) {
 static int cmd_detect(int argc, char** argv) {
   std::string img = arg_of(argc, argv, "--img", "");
   std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_pyj320.onnx");
-  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v2.onnx");
+  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v7_bal.onnx");
   std::string corner_p = arg_of(argc, argv, "--corner", "");   // empty = box crop + margin TTA
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string outp = arg_of(argc, argv, "--out", "");
