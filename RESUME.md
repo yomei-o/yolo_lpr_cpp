@@ -300,7 +300,8 @@ Ultralytics に頼んでいる処方を C++ にも入れた:
 ## 出発点モデルを C++ だけで作れるようにした — 2026-08-20（残差 1 番）
 
 `jlpr train --model det` は既存 ONNX の追加学習しかできず、**最初の 1 個を作る**のだけが Python 専用
-だった。`pure/make_det.hpp` がそのグラフを書く。
+だった。`pure/make_det.hpp`（検出器）と `pure/make_ocr.hpp`（認識器）がそのグラフを書く。
+これで 3 段すべてが「何も無いところから」始められる（4隅は前から `--init random`）。
 
 ```sh
 jlpr init-det --out models/scratch_320.onnx --arch n --nc 1 --imgsz 320            # ランダム初期化
@@ -327,6 +328,27 @@ WASM デモにも変換なしで載る。パラメータ名も Ultralytics の s
 これは nc に依存する幅だから: nc=80 では中間が max(64, min(80,100)) = 80 チャンネル、nc=1 では 64 で、
 形が違うので載らない。姉妹リポ RESUME の「cls head の nc=1 再初期化」がこれ。
 `init-det` は載らなかった名前を一覧で出すので、黙って落ちることはない。
+
+**転移で始めるときの落とし穴（実測）**: 事前学習の胴体に**真新しい cls head** が乗るので、既定の
+lr 2e-3 では cls が発散する（step3 で loss 7.2e11、次で NaN）。lr 1e-6 なら安定、`--clip 10` を
+付ければ既定 lr でも安定（8 step 回して NaN なし）。`--clip` を検出器と認識器の学習に足した
+（**既定はオフ**: RESUME に載っている loss 系列とパリティ試験は全部クリップ無しで測った値なので、
+黙って有効にすると全部無効になる）。
+
+**認識器のゼロ生成** — `jlpr init-ocr`:
+
+| | 値 |
+|---|---|
+| 生成物 | 120 ノード / 184 初期化子 / **11 head** / 316,200 パラメータ（同梱の 9 head 版は 307,998） |
+| head の幅 | `spec/labels.txt` から取る（region 138、class_num 10/20/22、hiragana 53、plate_num 11/11/11/10、plate_kind 8、legible 2） |
+| ONNX 妥当性 | `onnx.checker` PASS、onnxruntime で 11 出力、region の softmax が合計 1.0000 |
+| 初期化 | torch 準拠 U(±1/√fan_in)、BN は weight 1 / bias 0 / mean 0 / var 1 |
+| 学習できるか | `jlpr train --model ocr --init` に渡して実データ 576 枚で 40 step、地名 **0.0% → 4.2%**（ランダムなら 1/138 = 0.7%）。本気で回した数字ではなく「経路が通る」ことの確認 |
+
+作る途中で踏んだ罠を 1 つ記録しておく: `lprx::Builder` は重みリストを**インタリーブ順**に読む
+（stem → 分岐A の conv → **分岐A の head** → 分岐B の conv → 残りの head）。head を全部末尾に並べる
+自然な書き方だと、分岐A の head が分岐B の畳み込みを読んでしまい、症状は
+「出力名が空の ONNX」になる（`onnx.checker` が `Field 'name' of 'value_info' is required` で落ちて気付いた）。
 
 ## GPU 実機で確認した — 2026-08-20（Kaggle T4、CPU と同値）
 

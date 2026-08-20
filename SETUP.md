@@ -65,9 +65,15 @@ python tools/train_corner.py --synth data/synth --steps 3000 --batch 64 --export
 ./jlpr.exe train --model corner --synth data/synth --steps 3000 --batch 64 \
   --init random --width 24 --export models/plate_corner_new.onnx
 
-# 検出器の出発点を C++ だけで作る（Python も学習済み重みも要らない）
+# 出発点のモデルを C++ だけで作る（Python も学習済み重みも要らない）
 ./jlpr.exe init-det --out models/scratch_320.onnx --arch n --nc 1 --imgsz 320
 ./jlpr.exe init-det --out models/tr_320.onnx --arch n --nc 1 --imgsz 320 --from-pt yolov8n.pt
+./jlpr.exe init-ocr --out models/scratch_ocr.onnx          # 認識器（head 幅は spec から）
+./jlpr.exe train --model corner --init random ...          # 4隅（前からある）
+
+# 転移で始めるときは勾配クリップを付ける。事前学習の胴体に真新しい cls head が乗るので、
+# 既定 lr のままだと cls が発散する（実測: step3 で 3.6e11 -> NaN。--clip 10 で安定）
+./jlpr.exe train --model det --init models/tr_320.onnx --data data/det_train2 --clip 10
 
 # 検出器（Ultralytics。yolov8n.pt を自動取得。T4 で 28 epoch 約 70 分）
 python tools/train_det.py --data data/det_train2 --data data/det_real --val data/det_val2 \
