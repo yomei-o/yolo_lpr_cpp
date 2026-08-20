@@ -23,6 +23,7 @@
 #include "onnx_train.hpp"
 #include "trainrt.hpp"
 #include "make_det.hpp"
+#include "make_ocr.hpp"
 #include "train_ocr.hpp"
 #include "train_det.hpp"
 #include "eval_det.hpp"
@@ -445,6 +446,29 @@ static DetEval eval_det_dir(const onx::Graph& det, jl::DetCfg cfg, const std::st
   return e;
 }
 
+// jlpr init-ocr — write a recogniser ONNX from scratch (pure/make_ocr.hpp). The head widths come from
+// the spec, so a spec change (138 region names, 11 heads) needs no other edit.
+static int cmd_init_ocr(int argc, char** argv) {
+  const std::string out = arg_of(argc, argv, "--out", "");
+  const std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
+  lprx::MakeCfg cfg;
+  cfg.ch = std::atoi(arg_of(argc, argv, "--width", "128").c_str());
+  cfg.nblocks_a = std::atoi(arg_of(argc, argv, "--blocks-a", "6").c_str());
+  cfg.nblocks_b = std::atoi(arg_of(argc, argv, "--blocks-b", "5").c_str());
+  cfg.nheads_a = std::atoi(arg_of(argc, argv, "--heads-a", "4").c_str());
+  cfg.seed = strtoull(arg_of(argc, argv, "--seed", "1234").c_str(), nullptr, 10);
+  if (out.empty()) {
+    printf("usage: jlpr init-ocr --out <onnx> [--spec spec/labels.txt] [--width 128]\n"
+           "                     [--blocks-a 6] [--blocks-b 5] [--heads-a 4] [--seed N]\n");
+    return 1;
+  }
+  spec::Spec sp = spec::load(spec_path);
+  lprx::make_lpr_onnx(sp, out, cfg);
+  for (const spec::Group* g : sp.of_kind("head"))
+    printf("  head %-14s %d classes\n", g->name.c_str(), g->n);
+  return 0;
+}
+
 // jlpr init-det — write a yolov8 detector ONNX from scratch (pure/make_det.hpp), optionally filling it
 // from a torch checkpoint. This is the step that used to require Python: everything downstream
 // (`train --model det`, `val --model det`, `detect`, the WASM demo) already reads this file format.
@@ -591,6 +615,12 @@ static int cmd_train_det(int argc, char** argv) {
   // Stop cleanly at a step and checkpoint. Written for the wall clock: a Kaggle session dies at 9
   // hours, so "run 4000 steps of a 20000-step schedule, then resume tomorrow" has to be expressible.
   int stop_at = std::atoi(arg_of(argc, argv, "--stop-at", "0").c_str());
+  // Gradient clipping, off by default because Ultralytics does not clip and the recorded loss
+  // sequences in RESUME were measured without it. It exists for one specific situation, measured:
+  // a `--from-pt` start puts a *fresh* class head on a *pretrained* trunk, and at the default lr the
+  // cls term explodes (step 3: 3.6e11, then NaN) while the same graph at lr 1e-6 is stable. Clipping
+  // is the cheap fix; a longer warmup or a lower lr are the other two.
+  float clip = (float)atof(arg_of(argc, argv, "--clip", "0").c_str());
   int imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "0").c_str());
   int steps = std::atoi(arg_of(argc, argv, "--steps", "30").c_str());
   int epochs = std::atoi(arg_of(argc, argv, "--epochs", "0").c_str());
@@ -883,6 +913,7 @@ static int cmd_train_det(int argc, char** argv) {
     Tensor loss = det::forward_loss(t, hn, ba.x, ba.gts, imgsz, cfg, &rep, &bxs, &css);
     if (use_sgd) sgd.zero_grad(); else adam.zero_grad();
     backward(loss);
+    if (clip > 0) crn::clip_grad_norm(t.params, clip);
     if (dump_loss) printf("%d %.6f %.6f %.6f %.6f\n", step, rep.total, rep.box, rep.cls, rep.dfl);
     else printf("step %d: loss %.4f (box %.4f cls %.4f dfl %.4f) fg %d tss %.2f lr %.2e\n", step,
                 rep.total, rep.box, rep.cls, rep.dfl, rep.fg, rep.tss, lr);
@@ -1264,6 +1295,11 @@ static int cmd_train(int argc, char** argv) {
   int ckpt_every = std::atoi(arg_of(argc, argv, "--ckpt-every", "0").c_str());
   int patience = std::atoi(arg_of(argc, argv, "--patience", "0").c_str());
   int stop_at = std::atoi(arg_of(argc, argv, "--stop-at", "0").c_str());
+  // Off by default: every loss sequence recorded in RESUME (and the parity tests) was measured
+  // without clipping, so turning it on silently would invalidate them. Available because a head that
+  // starts from scratch on top of trained weights can spike — the detector's `--from-pt` start does
+  // exactly that (see cmd_train_det).
+  float clip = (float)atof(arg_of(argc, argv, "--clip", "0").c_str());
   rt::Patience pat(patience, true);                       // region accuracy: higher is better
   rt::Log tlog;
   if (!log_p.empty()) tlog.open(log_p, "step,loss,lr,real_region,synth_region");
@@ -1331,6 +1367,7 @@ static int cmd_train(int argc, char** argv) {
     if (!loss) continue;
     for (Tensor& p : t.params) std::fill(p->grad.begin(), p->grad.end(), 0.f);
     backward(loss);
+    if (clip > 0) crn::clip_grad_norm(t.params, clip);
     opt_head.step();
     opt_bb.step();
     double lv = loss->data[0];
@@ -2255,6 +2292,7 @@ int main(int argc, char** argv) {
   if (cmd == "gen") return cmd_gen(argc, argv);
   if (cmd == "gen-det") return cmd_gen_det(argc, argv);
   if (cmd == "init-det") return cmd_init_det(argc, argv);
+  if (cmd == "init-ocr") return cmd_init_ocr(argc, argv);
   if (cmd == "train") return cmd_train(argc, argv);
   if (cmd == "val") return cmd_val(argc, argv);
   if (cmd == "pseudo-label") return cmd_pseudo_label(argc, argv);
