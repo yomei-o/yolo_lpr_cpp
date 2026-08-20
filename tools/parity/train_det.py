@@ -10,7 +10,9 @@ CIoU, the DFL, the gains — and not a different image, a different sampler or a
   jlpr train --model det --data data/det_smoke --steps 1 --batch 2 --dump-fixture scratch/det_fix.bin
   python tools/parity/train_det.py --fixture scratch/det_fix.bin
 
-Passing means: the three loss terms agree to 1e-5 relative, and every gradient of the six head
+Passing means: box and dfl agree to 1e-5 relative, cls to 2e-4 (see --cls-tol: the BCE is summed over
+every anchor and torch's float32 reduction is itself 4.6e-05 low against a float64 reference, which is
+the whole of the gap), and every gradient of the six head
 tensors agrees to 1e-4 relative (float32 on both sides; the assignment is discrete, so if it ever
 disagreed the gradients would differ by whole anchors, not by rounding).
 """
@@ -73,6 +75,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixture", default="scratch/det_fix.bin")
     ap.add_argument("--loss-tol", type=float, default=1e-5)
+    # The cls term gets its own, looser bar, and the reason is measured rather than assumed: it is a
+    # BCE summed over every anchor (2100 at 320px), and *torch* is the side that loses precision doing
+    # it in float32. Feeding the identical logits and targets to a float64 reduction gives 6.191132
+    # where torch float32 gives 6.190848 — torch is 4.6e-05 low, which is the whole of the C++/python
+    # gap (measured 1.7e-05 .. 4.5e-05 over several fixtures, C++ always the higher = the accurate one).
+    # Reproduce by monkeypatching F.binary_cross_entropy_with_logits and summing in double.
+    ap.add_argument("--cls-tol", type=float, default=2e-4,
+                    help="tolerance for the cls term alone (float32 reduction noise over all anchors)")
     ap.add_argument("--grad-tol", type=float, default=1e-4)
     a = ap.parse_args()
 
@@ -135,10 +145,13 @@ def main():
     ok = True
     for n, c, p in zip(names, cpp, py):
         rel = abs(c - p) / max(1e-9, abs(p))
-        ok = ok and rel <= a.loss_tol
-        print("  %-4s C++ %.6f   python %.6f   rel %.2e" % (n, c, p, rel))
+        tol = a.cls_tol if n == "cls" else a.loss_tol
+        ok = ok and rel <= tol
+        print("  %-4s C++ %.6f   python %.6f   rel %.2e%s"
+              % (n, c, p, rel, "  (tol %.0e)" % tol if tol != a.loss_tol else ""))
     rel_total = abs(total_cpp - float(total)) / max(1e-9, abs(float(total)))
-    ok = ok and rel_total <= a.loss_tol
+    # the sum carries the cls term's noise, scaled by its share of the total
+    ok = ok and rel_total <= max(a.loss_tol, a.cls_tol * 0.5)
     print("  %-4s C++ %.6f   python %.6f   rel %.2e" % ("sum", total_cpp, float(total), rel_total))
 
     for what, cppg, pyg in (("box heads", fx["gbox"], boxes.grad), ("cls heads", fx["gcls"], scores.grad)):
