@@ -19,8 +19,16 @@ static std::vector<jl::Box> g_last_boxes;
 static std::vector<std::vector<std::vector<float>>> g_last_probs;
 static jl::Tracker g_tracker;
 static jl::TrackerCfg g_tcfg;
+static int g_rot_search = 0;      // 1 = also search frames rotated +-30 deg when nothing is found
+static int g_refine = 0;          // extra corner-net passes (pipeline.hpp refine_corners)
 
 extern "C" {
+
+// Tilted / rotated plates (README 「回転・斜め」). Off by default so jl_run behaves as before.
+EMSCRIPTEN_KEEPALIVE void jl_set_rotation(int rot_search, int refine) {
+  g_rot_search = rot_search;
+  g_refine = refine;
+}
 
 EMSCRIPTEN_KEEPALIVE int jl_load_det(const unsigned char* buf, int len) {
   g_det = onx::parse_onnx(buf, (size_t)len);
@@ -67,6 +75,33 @@ EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float c
   }
 
   std::vector<jl::Box> boxes;
+  std::vector<jl::Read> reads;
+  jl::CornerCfg ccfg;
+  ccfg.refine = g_refine;
+  if (bx0 < 0 && g_rot_search && g_det_ok) {
+    // Tilted-plate path: upright first, the rotated frames only when the upright pass found nothing
+    // (an upright plate costs exactly what it did before).
+    jl::DetCfg cfg;
+    cfg.conf = conf;
+    if (det_kind >= 1) {
+      cfg.kind = jl::DetKind::V8;
+      cfg.nc = 1;
+      cfg.plate_class = 0;
+      cfg.imgsz = 0;
+      cfg.v8_fmt = (det_kind == 2) ? BoxFmt::CXCYWH : BoxFmt::XYXY;
+    }
+    static const std::vector<float> angles = {0.f, 30.f, -30.f};
+    for (const jl::PlateHit& hh : jl::find_plates(g_det, g_corner_ok ? &g_corner : nullptr, rgb.data(), w, h,
+                                                  cfg, ccfg, angles, true)) {
+      boxes.push_back(hh.box);
+      reads.push_back(jl::read_hit(g_ocr, g_spec, rgb.data(), w, h, hh, ccfg, tta != 0));
+    }
+    g_last_boxes = boxes;
+    g_last_probs.clear();
+    for (const jl::Read& r : reads) g_last_probs.push_back(r.probs);
+    g_result = jl::plates_json(boxes, reads);
+    return (int)boxes.size();
+  }
   if (bx0 >= 0) {
     boxes.push_back({bx0, by0, bx1, by1, 1.0f});
   } else {
@@ -85,8 +120,6 @@ EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float c
 
   g_last_boxes = boxes;
   g_last_probs.clear();
-  std::vector<jl::Read> reads;
-  jl::CornerCfg ccfg;
   for (const jl::Box& b : boxes) {
     float corners[8];
     if (g_corner_ok && jl::predict_corners(g_corner, rgb.data(), w, h, b, ccfg, corners)) {

@@ -57,7 +57,17 @@ class Params(object):
     pass
 
 
-def sample(rng, sp):
+GEOM_DEFAULT = (35.0, 20.0, 8.0)   # yaw, pitch, roll limits — gen::Geom; what shipped data used
+
+
+def parse_geom(s):
+    """Mirror of gen::parse_geom: "yaw,pitch,roll" in degrees; empty = defaults."""
+    if not s:
+        return GEOM_DEFAULT
+    return tuple(float(v) for v in s.split(","))
+
+
+def sample(rng, sp, geom=GEOM_DEFAULT):
     """Mirror of gen::sample — the rng call order is the contract (spec/gen.md)."""
     p = Params()
     reg = sp.head("region")
@@ -97,9 +107,9 @@ def sample(rng, sp):
     if p.serial_idx[3] == 10:
         p.serial_idx[3] = 0
 
-    p.yaw = rng.range(-35, 35)                                              # 9
-    p.pitch = rng.range(-20, 20)                                            # 10
-    p.roll = rng.range(-8, 8)                                               # 11
+    p.yaw = rng.range(-geom[0], geom[0])                                    # 9
+    p.pitch = rng.range(-geom[1], geom[1])                                  # 10
+    p.roll = rng.range(-geom[2], geom[2])                                   # 11
     p.plate_px = rng.range(24, 200)                                         # 12
     p.margin = rng.range(0.02, 0.18)                                        # 13
     p.off_x = rng.range(-0.05, 0.05)                                        # 14
@@ -420,6 +430,7 @@ def main():
                     "2025 additions, for oversampling names real data has none of). Applied after "
                     "sample(), so the rng draw order in spec/gen.md is unchanged.")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--geom", default="", help="viewing-angle limits yaw,pitch,roll (default 35,20,8)")
     a = ap.parse_args()
 
     sp = L.load(a.spec)
@@ -437,7 +448,7 @@ def main():
 
     for i in range(a.start, a.start + a.count):
         rng = Rng(a.seed ^ ((i * 0x9E3779B97F4A7C15) & ((1 << 64) - 1)))
-        p = sample(rng, sp)
+        p = sample(rng, sp, parse_geom(a.geom))
         if a.region == "sweep":
             p.region = i % sp.head("region").n
         elif "-" in a.region:

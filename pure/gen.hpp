@@ -36,6 +36,7 @@ struct Params {
   std::string serial_text;              // digits only
   // --- geometry ------------------------------------------------------------------------------
   double yaw = 0, pitch = 0, roll = 0;
+  double cam_dist = 3.0;   // camera distance in plate widths; not drawn (rot-test sets it). Smaller = stronger keystone
   double plate_px = 100, margin = 0.1, off_x = 0, off_y = 0;
   // --- photometry / degradation ---------------------------------------------------------------
   double brightness = 1, contrast = 1, warm = 0, blur = 0, motion = 0, noise = 0, dirt = 0;
@@ -74,8 +75,19 @@ inline void palette_of(int kind, Rgb& bg, Rgb& fg) {
   }
 }
 
+// Viewing-angle limits (degrees, symmetric). The defaults are what every shipped dataset was made
+// with; `--geom` widens them for rotation-robust training. Only the bounds change, never the number
+// of draws, so the rng stream (and every other field) is the same for any setting.
+struct Geom { double yaw = 35, pitch = 20, roll = 8; };
+
+inline Geom parse_geom(const std::string& s) {   // "yaw,pitch,roll"; empty = defaults
+  Geom g;
+  if (!s.empty()) sscanf(s.c_str(), "%lf,%lf,%lf", &g.yaw, &g.pitch, &g.roll);
+  return g;
+}
+
 // Draw one sample. The order of rng calls is the contract — see spec/gen.md.
-inline Params sample(Rng& rng, const spec::Spec& sp) {
+inline Params sample(Rng& rng, const spec::Spec& sp, const Geom& geom = Geom()) {
   Params p;
   const spec::Group& reg = sp.head("region");
   const spec::Group& cn2 = sp.head("class_num_02");
@@ -116,9 +128,9 @@ inline Params sample(Rng& rng, const spec::Spec& sp) {
   }
   p.serial_idx[3] = p.serial_idx[3] == 10 ? 0 : p.serial_idx[3];           // head 04 has no blank class
 
-  p.yaw = rng.range(-35, 35);                                              // 9
-  p.pitch = rng.range(-20, 20);                                            // 10
-  p.roll = rng.range(-8, 8);                                               // 11
+  p.yaw = rng.range(-geom.yaw, geom.yaw);                                  // 9
+  p.pitch = rng.range(-geom.pitch, geom.pitch);                            // 10
+  p.roll = rng.range(-geom.roll, geom.roll);                               // 11
   p.plate_px = rng.range(24, 200);                                         // 12
   p.margin = rng.range(0.02, 0.18);                                        // 13
   p.off_x = rng.range(-0.05, 0.05);                                        // 14

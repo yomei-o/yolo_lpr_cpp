@@ -118,6 +118,8 @@ static int cmd_gen(int argc, char** argv) {
     region_pin = -3;
   }
   bool tex_dump = has_flag(argc, argv, "--tex-dump");   // also write the flat plate art (debug)
+  // --geom yaw,pitch,roll: viewing-angle limits in degrees (default 35,20,8 = the shipped datasets)
+  const gen::Geom geom = gen::parse_geom(arg_of(argc, argv, "--geom", ""));
   bool quiet = has_flag(argc, argv, "--quiet");
 
   spec::Spec sp = spec::load(spec_path);
@@ -171,7 +173,7 @@ static int cmd_gen(int argc, char** argv) {
   for (int i = start; i < start + count; ++i) {
     // Per-sample stream so any range can be generated independently (spec/gen.md).
     Rng rng(seed ^ ((uint64_t)i * 0x9E3779B97F4A7C15ull));
-    gen::Params p = gen::sample(rng, sp);
+    gen::Params p = gen::sample(rng, sp, geom);
     // --region pins (or sweeps) the region name. Applied after sample() so the draw order stays as
     // spec/gen.md documents it; used to make crops of names the real data has none of.
     if (region_pin == -2) p.region = i % sp.head("region").n;
@@ -236,6 +238,7 @@ static int cmd_gen_det(int argc, char** argv) {
   uint64_t seed = strtoull(arg_of(argc, argv, "--seed", "12345").c_str(), nullptr, 10);
   bool meta_only = has_flag(argc, argv, "--meta-only");
   bool quiet = has_flag(argc, argv, "--quiet");
+  const gen::Geom geom = gen::parse_geom(arg_of(argc, argv, "--geom", ""));
 
   spec::Spec sp = spec::load(spec_path);
   // --fonts-strict: only the faces spec/fonts.txt lists (reproducible datasets on any machine)
@@ -301,7 +304,7 @@ static int cmd_gen_det(int argc, char** argv) {
   for (int i = start; i < start + count; ++i) {
     Rng rng(seed ^ ((uint64_t)i * 0x9E3779B97F4A7C15ull) ^ 0xD1B54A32D192ED03ull);
     gen::DetSample d = gen::sample_det(rng, sp, (int)bgs.size(), (int)font_paths.size(),
-                                       (int)reals.size(), real_pct);
+                                       (int)reals.size(), real_pct, geom);
     gen::apply_share(d, imgsz);
     gen::place_det(d, imgsz);
     char name[64];
@@ -2040,6 +2043,181 @@ static int cmd_recolor_test(int argc, char** argv) {
   return 0;
 }
 
+// jlpr rot-test — how reading degrades with plate rotation / viewing angle.
+//
+// Real plates (the alpr_jp hold-out split, region labels) are pasted onto real plate-free
+// backgrounds at a controlled roll/yaw/pitch, and the whole product path runs on the frame:
+// detector -> corner net (+ cascade refinement) -> recognizer. Scored on the region head, the
+// only head the real data labels. `--oracle` swaps the detector for the true bounding box, which
+// separates "the detector lost it" from "it was found but misread".
+//   jlpr rot-test --alpr ../alpr_jp --corner models/plate_corner.onnx --refine 1
+//                 --angles 0:0:0,15:0:0,30:0:0  (roll:yaw:pitch, degrees)
+static int cmd_rot_test(int argc, char** argv) {
+  std::string alpr = arg_of(argc, argv, "--alpr", "../alpr_jp");
+  std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_v8n_640.onnx");
+  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_v7_bal.onnx");
+  std::string corner_p = arg_of(argc, argv, "--corner", "");
+  std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
+  std::string angles = arg_of(argc, argv, "--angles",
+                              "0:0:0,10:0:0,20:0:0,30:0:0,45:0:0,0:30:0,0:50:0,0:0:30,20:40:15");
+  std::string dump = arg_of(argc, argv, "--dump", "");
+  float share = (float)atof(arg_of(argc, argv, "--share", "0.30").c_str());
+  // --cam-dist: camera distance in plate widths (3 = the generator default; 1.2 = a close, wide-angle
+  // oblique shot with strong keystone)
+  const double cam_dist = atof(arg_of(argc, argv, "--cam-dist", "3.0").c_str());
+  int refine = std::atoi(arg_of(argc, argv, "--refine", "0").c_str());
+  int limit = std::atoi(arg_of(argc, argv, "--limit", "0").c_str());
+  float min_box = (float)atof(arg_of(argc, argv, "--min-box", "90").c_str());
+  bool oracle = has_flag(argc, argv, "--oracle");
+  bool tta = has_flag(argc, argv, "--tta");
+  // --rot-search 0,30,-30: also look for plates in the frame rotated by these angles (degrees)
+  // --rot-fallback: only when the earlier angles found nothing (the WASM mode)
+  const bool rot_fallback = has_flag(argc, argv, "--rot-fallback");
+  std::vector<float> search;
+  {
+    std::stringstream rs(arg_of(argc, argv, "--rot-search", "0"));
+    std::string t;
+    while (std::getline(rs, t, ',')) search.push_back((float)atof(t.c_str()));
+  }
+  const int S = 640;
+
+  spec::Spec sp = spec::load(spec_p);
+  onx::Graph det = onx::load_onnx(det_p), ocr = onx::load_onnx(ocr_p), corner;
+  if (!corner_p.empty()) corner = onx::load_onnx(corner_p);
+  jl::DetCfg dcfg;
+  dcfg.kind = jl::DetKind::V8; dcfg.imgsz = 0; dcfg.plate_class = 0; dcfg.nc = 1;
+  dcfg.conf = (float)atof(arg_of(argc, argv, "--conf", "0.30").c_str());
+  // our own yolov8n exports are plain Ultralytics graphs: cxcywh (the borrowed PlateYOLO-JP is xyxy)
+  dcfg.v8_fmt = (arg_of(argc, argv, "--fmt", "cxcywh") == "xyxy") ? BoxFmt::XYXY : BoxFmt::CXCYWH;
+  jl::CornerCfg ccfg;
+  ccfg.refine = refine;
+  // --corner2 <onnx>: a different net for the refine passes (wide first look, frontal specialist after)
+  onx::Graph corner2;
+  if (!arg_of(argc, argv, "--corner2", "").empty()) {
+    corner2 = onx::load_onnx(arg_of(argc, argv, "--corner2", ""));
+    ccfg.refine_net = &corner2;
+  }
+  ccfg.min_box_px = min_box;
+
+  std::vector<trn::Item> items = trn::read_alpr(alpr, sp);
+  std::vector<int> tr, idxs;
+  trn::split_holdout(items.size(), 0.2, tr, idxs);
+  if (limit > 0 && (int)idxs.size() > limit) idxs.resize((size_t)limit);
+  std::vector<std::string> bgs;
+  trn::list_images_recursive(alpr + "/train/neg", bgs);
+  std::sort(bgs.begin(), bgs.end());
+  if (bgs.empty()) { printf("no backgrounds under %s/train/neg\n", alpr.c_str()); return 1; }
+
+  struct Ang { double roll, yaw, pitch; };
+  std::vector<Ang> angs;
+  {
+    std::stringstream ss(angles);
+    std::string tok;
+    while (std::getline(ss, tok, ',')) {
+      Ang a{0, 0, 0};
+      sscanf(tok.c_str(), "%lf:%lf:%lf", &a.roll, &a.yaw, &a.pitch);
+      angs.push_back(a);
+    }
+  }
+  printf("rot-test: %zu hold-out plates x %zu angles, share %.2f, %s, corner=%s refine=%d\n",
+         idxs.size(), angs.size(), share, oracle ? "ORACLE box" : "detector box",
+         corner_p.empty() ? "none" : corner_p.c_str(), refine);
+  printf("%-16s %7s %7s %7s %8s\n", "roll:yaw:pitch", "found", "region", "|found", "warped");
+  if (!dump.empty()) make_dir(dump);
+  for (const Ang& a : angs) {
+    std::vector<int> ok_v(idxs.size(), 0), found_v(idxs.size(), 0), warp_v(idxs.size(), 0);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for (int k = 0; k < (int)idxs.size(); ++k) {
+      const trn::Item& it = items[(size_t)idxs[(size_t)k]];
+      int rw = 0, rh = 0, rc = 0, bw = 0, bh = 0, bc = 0;
+      std::vector<unsigned char> rb = trn::read_file(it.path);
+      unsigned char* ri = rb.empty() ? nullptr
+                                     : stbi_load_from_memory(rb.data(), (int)rb.size(), &rw, &rh, &rc, 3);
+      if (!ri) continue;
+      gen::Img tex;
+      tex.w = rw; tex.h = rh; tex.d.assign(ri, ri + (size_t)rw * rh * 3);
+      stbi_image_free(ri);
+      std::vector<unsigned char> bb = trn::read_file(bgs[(size_t)k % bgs.size()]);
+      unsigned char* bi = bb.empty() ? nullptr
+                                     : stbi_load_from_memory(bb.data(), (int)bb.size(), &bw, &bh, &bc, 3);
+      gen::Img canvas(S, S, {90, 90, 90});
+      if (bi) {
+        int side = std::min(bw, bh), ox = (bw - side) / 2, oy = (bh - side) / 2;
+        for (int y = 0; y < S; ++y)
+          for (int x = 0; x < S; ++x) {
+            int sx = std::clamp(ox + (int)((x + 0.5f) * side / S), 0, bw - 1);
+            int sy = std::clamp(oy + (int)((y + 0.5f) * side / S), 0, bh - 1);
+            const unsigned char* q = &bi[((size_t)sy * bw + sx) * 3];
+            unsigned char* d = canvas.at(x, y);
+            d[0] = q[0]; d[1] = q[1]; d[2] = q[2];
+          }
+        stbi_image_free(bi);
+      }
+      gen::Params p;
+      p.roll = a.roll; p.yaw = a.yaw; p.pitch = a.pitch;
+      p.large = false;
+      p.plate_px = share * S;
+      p.cam_dist = cam_dist;
+      const double cx = S * (0.5 + 0.1 * std::sin(k * 1.7)), cy = S * (0.5 + 0.1 * std::cos(k * 2.3));
+      gen::Quad q = gen::project_plate(p, cx, cy);
+      gen::paste_textured_quad(canvas, tex, q);
+      float gx0 = 1e9f, gy0 = 1e9f, gx1 = -1e9f, gy1 = -1e9f;
+      for (int i = 0; i < 4; ++i) {
+        gx0 = std::min(gx0, (float)q.x[i]); gx1 = std::max(gx1, (float)q.x[i]);
+        gy0 = std::min(gy0, (float)q.y[i]); gy1 = std::max(gy1, (float)q.y[i]);
+      }
+      const jl::Box gt{gx0, gy0, gx1, gy1, 1.f};
+      jl::PlateHit hit;
+      bool have = false;
+      if (oracle) {
+        const float qd[8] = {gx0, gy0, gx1, gy0, gx1, gy1, gx0, gy1};
+        hit.box = gt; hit.rbox = gt; hit.angle = 0.f; std::copy(qd, qd + 8, hit.quad);
+        hit.cornered = !corner_p.empty() && jl::predict_corners(corner, canvas.d.data(), S, S, gt, ccfg, hit.quad);
+        if (!hit.cornered) std::copy(qd, qd + 8, hit.quad);
+        have = true;
+      } else {
+        std::vector<jl::PlateHit> hits = jl::find_plates(det, corner_p.empty() ? nullptr : &corner,
+                                                         canvas.d.data(), S, S, dcfg, ccfg, search,
+                                                         rot_fallback);
+        float best = 0.3f;
+        for (const jl::PlateHit& h : hits) {
+          const float iou = jl::box_iou(h.box, gt);
+          if (iou > best) { best = iou; hit = h; have = true; }
+        }
+      }
+      if (!have) continue;
+      found_v[(size_t)k] = 1;
+      jl::Read rd = jl::read_hit(ocr, sp, canvas.d.data(), S, S, hit, ccfg, tta);
+      const bool warped = hit.cornered;
+      const float* c = hit.quad;
+      warp_v[(size_t)k] = warped ? 1 : 0;
+      ok_v[(size_t)k] = (it.mask[0] > 0.5f && rd.arg[0] == it.heads[0]) ? 1 : 0;
+      if (!dump.empty() && k < 6) {
+        if (warped)
+          for (int i = 0; i < 4; ++i)
+            for (int dy = -2; dy <= 2; ++dy)
+              for (int dx = -2; dx <= 2; ++dx)
+                canvas.blend((int)c[2 * i] + dx, (int)c[2 * i + 1] + dy, {255, 0, 255}, 1.f);
+        char nm[512];
+        snprintf(nm, sizeof nm, "%s/r%03d_y%03d_p%03d_%d_%s.png", dump.c_str(), (int)a.roll, (int)a.yaw,
+                 (int)a.pitch, k, ok_v[(size_t)k] ? "ok" : "ng");
+        stbi_write_png(nm, S, S, 3, canvas.d.data(), S * 3);
+      }
+    }
+    int found = 0, right = 0, warped_n = 0;
+    for (size_t k = 0; k < idxs.size(); ++k) { found += found_v[k]; right += ok_v[k]; warped_n += warp_v[k]; }
+    const int n = std::max<int>(1, (int)idxs.size());
+    char lab[64];
+    snprintf(lab, sizeof lab, "%g:%g:%g", a.roll, a.yaw, a.pitch);
+    printf("%-16s %6.1f%% %6.1f%% %6.1f%% %7.1f%%\n", lab, 100.0 * found / n, 100.0 * right / n,
+           100.0 * right / std::max(1, found), 100.0 * warped_n / std::max(1, found));
+    fflush(stdout);
+  }
+  return 0;
+}
+
 static int cmd_labels(int argc, char** argv) {
   std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
   spec::Spec sp = spec::load(spec_path);
@@ -2189,7 +2367,7 @@ static int cmd_detect(int argc, char** argv) {
     cfg.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "416").c_str());
   }
   if (img.empty()) {
-    printf("usage: jlpr detect --img <file> [--det onnx] [--ocr onnx] [--out png] [--corner onnx] [--det-kind v8|yolox] [--fmt xyxy|cxcywh] [--conf f] [--single] [--json]\n");
+    printf("usage: jlpr detect --img <file> [--det onnx] [--ocr onnx] [--out png] [--corner onnx] [--det-kind v8|yolox] [--fmt xyxy|cxcywh] [--conf f] [--single] [--json] [--rot-search 0,30,-30] [--refine N]\n");
     return 1;
   }
 
@@ -2204,27 +2382,39 @@ static int cmd_detect(int argc, char** argv) {
   if (!corner_p.empty()) { corner = onx::load_onnx(corner_p); have_corner = !corner.nodes.empty(); }
   if (!as_json) printf("%s %dx%d   det=%s ocr=%s\n", img.c_str(), W, H, det_p.c_str(), ocr_p.c_str());
 
-  std::vector<Det> all;
-  std::vector<jl::Box> boxes = jl::detect_plates(det, im, W, H, cfg, &all);
+  // --rot-search 0,30,-30: also look in the frame rotated by these angles (tilted / rolled plates;
+  // the detector alone loses a plate rolled 45 degrees). --refine N: extra corner-net passes.
+  std::vector<float> search;
+  {
+    std::stringstream rs(arg_of(argc, argv, "--rot-search", "0"));
+    std::string t;
+    while (std::getline(rs, t, ',')) search.push_back((float)atof(t.c_str()));
+  }
+  jl::CornerCfg ccfg;
+  ccfg.refine = std::atoi(arg_of(argc, argv, "--refine", "0").c_str());
+  onx::Graph corner2;                  // --corner2: net for the refine passes (see CornerCfg)
+  if (!arg_of(argc, argv, "--corner2", "").empty()) {
+    corner2 = onx::load_onnx(arg_of(argc, argv, "--corner2", ""));
+    ccfg.refine_net = &corner2;
+  }
+  std::vector<jl::PlateHit> hits = jl::find_plates(det, have_corner ? &corner : nullptr, im, W, H, cfg,
+                                                   ccfg, search);
+  std::vector<jl::Box> boxes;
   std::vector<jl::Read> reads;
   if (!as_json)
-    printf("plates: %zu (conf>=%.2f, %zu raw detections over all classes)\n", boxes.size(), cfg.conf, all.size());
+    printf("plates: %zu (conf>=%.2f, searched %zu rotation(s))\n", hits.size(), cfg.conf, search.size());
 
-  for (size_t i = 0; i < boxes.size(); ++i) {
-    const jl::Box& b = boxes[i];
-    jl::Read r;
-    float corners[8];
-    jl::CornerCfg ccfg;
-    if (have_corner && jl::predict_corners(corner, im, W, H, b, ccfg, corners)) {
-      r = jl::read_plate_warped(ocr, sp, im, W, H, corners, ccfg);   // rectified: 1 forward pass
-    } else {
-      r = single ? jl::read_plate_single(ocr, sp, im, W, H, b.x1, b.y1, b.x2, b.y2)
-                 : jl::read_plate_tta(ocr, sp, im, W, H, b.x1, b.y1, b.x2, b.y2);
-    }
+  for (size_t i = 0; i < hits.size(); ++i) {
+    const jl::PlateHit& h = hits[i];
+    const jl::Box& b = h.box;
+    jl::Read r = jl::read_hit(ocr, sp, im, W, H, h, ccfg, !single);
+    boxes.push_back(b);
     reads.push_back(r);
     if (!as_json) {
-      printf("  [%zu] box (%.0f,%.0f)-(%.0f,%.0f) det %.2f  crops %d\n", i, b.x1, b.y1, b.x2, b.y2,
-             b.score, r.crops);
+      printf("  [%zu] box (%.0f,%.0f)-(%.0f,%.0f) det %.2f  crops %d%s", i, b.x1, b.y1, b.x2, b.y2,
+             b.score, r.crops, h.cornered ? "  rectified" : "");
+      if (h.angle != 0.f) printf("  (found at %+.0f deg)", h.angle);
+      printf("\n");
       out_raw("       " + r.plate.text + "\n");
       printf("       conf");
       for (size_t h = 0; h < r.conf.size(); ++h) printf(" %.2f", r.conf[h]);
@@ -2300,6 +2490,7 @@ int main(int argc, char** argv) {
   if (cmd == "context-test") return cmd_context_test(argc, argv);
   if (cmd == "strip-nms") return cmd_strip_nms(argc, argv);
   if (cmd == "recolor-test") return cmd_recolor_test(argc, argv);
+  if (cmd == "rot-test") return cmd_rot_test(argc, argv);
   printf("jlpr: '%s' is not implemented yet\n", cmd.c_str());
   return 1;
 }

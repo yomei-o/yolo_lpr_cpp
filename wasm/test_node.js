@@ -13,7 +13,11 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const fixture = process.argv[2] || path.join(ROOT, 'scratch', 'sample.rgba');
 const expect = process.argv[3] || '横浜 200 か 3591';
-const EXPECT_BOX = (process.env.EXPECT_BOX || '247,414,326,461').split(',').map(Number);
+// EXPECT_BOX=none skips the box check (rotated fixtures, where only the CLI knows the box)
+const EXPECT_BOX = (process.env.EXPECT_BOX || '247,414,326,461') === 'none' ? null
+  : (process.env.EXPECT_BOX || '247,414,326,461').split(',').map(Number);
+// ROT=1: the page's 「傾いたナンバーも探す」 (search +-30 deg frames when upright finds nothing)
+const ROT = Number(process.env.ROT || 0);
 // The page's default detector is ours at 640, and on this far-shot fixture it is a *correct but weak*
 // detection (0.41 — the borrowed model gets 0.80 here, our 320 finds nothing). So the floor is a knob:
 // its job is to catch a detector emitting garbage, not to encode one model's score.
@@ -71,6 +75,7 @@ function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
   const pf = M._malloc(px.length);
   M.HEAPU8.set(px, pf);
 
+  if (ROT) M._jl_set_rotation(1, 0);
   const t0 = Date.now();
   const nplates = M._jl_run(pf, w, h, 0.30, 1, -1, -1, -1, -1, DET_KIND);
   const secs = (Date.now() - t0) / 1000;
@@ -87,7 +92,7 @@ function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
   const best = res.plates[0];
   if (best.text !== expect) fail('text is "' + best.text + '", expected "' + expect + '"');
   if (best.det < MIN_DET) fail('detector score ' + best.det.toFixed(2) + ' is below the floor ' + MIN_DET);
-  for (let i = 0; i < 4; ++i) {
+  for (let i = 0; EXPECT_BOX && i < 4; ++i) {
     if (Math.abs(best.box[i] - EXPECT_BOX[i]) > 8) {
       fail('box ' + best.box.map((v) => v.toFixed(0)).join(',') + ' drifted from the CLI box ' + EXPECT_BOX.join(','));
     }
