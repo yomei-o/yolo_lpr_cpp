@@ -158,7 +158,12 @@ CLI は `jlpr detect --rot-search 0,30,-30`。WASM は `jl_set_rotation(1, 0)` �
 45° は探索オフで 0 個・オンで読める）。
 
 **残り**
-- **Python 側に回転探索と `rot-test` が無い**（対等性の穴。`tools/infer.py` に `find_plates` 相当を足す）。
+- ~~Python 側に回転探索と `rot-test` が無い~~ → **埋めた**（同日）。`tools/infer.py` に `rotate_frame` /
+  `find_plates` / `read_hit` / `refine_corners`（`--rot-search` `--rot-fallback` `--refine` `--corner2`）、
+  `tools/rot_test.py`。回した実写 14 枚 × 2 構成で C++ と枚数・argmax 全一致・box 差 0.10px 以下、
+  ベンチは 144 枚で同じ表（0:0:0 97.9% / 45:0:0 98.6% / 20:40:15 97.9%、探索なしの 45° は両方 0%）。
+  ついでに Python の `predict_corners` に C++ の 90px ゲートが無かった差も直した（C++ に合わせた）。
+  C++ 側は正立で見つけた箱を従来どおり検出器の箱で返すよう戻した（4隅の外接矩形にしていた）。
 - roll 60° 以上（±60° も探せば拾えるはず。144 枚では未測定）。画面幅 11% のバスは ±45° で見つからない。
 - **強い台形（近距離・広角の斜め撮影）は未評価**。`--cam-dist 1.2` で測れる。正解箱・探索なしの 6 枚では 5/6。
   2D の回転探索では台形は戻らないので、ここが崩れるなら 4隅補正の作り直しか検出器・認識器の追加学習。

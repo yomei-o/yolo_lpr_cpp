@@ -359,8 +359,12 @@ inline std::vector<PlateHit> find_plates(const onx::Graph& det, const onx::Graph
         x0 = std::min(x0, h.quad[2 * i]); x1 = std::max(x1, h.quad[2 * i]);
         y0 = std::min(y0, h.quad[2 * i + 1]); y1 = std::max(y1, h.quad[2 * i + 1]);
       }
-      h.box = {std::clamp(x0, 0.f, (float)W - 1), std::clamp(y0, 0.f, (float)H - 1),
-               std::clamp(x1, 0.f, (float)W - 1), std::clamp(y1, 0.f, (float)H - 1), b.score};
+      // Upright finds report the detector's own box, exactly as before the search existed (JSON,
+      // tracker and parity all key on it); rotated finds report the bbox of the mapped-back quad.
+      if (ang == 0.f) h.box = b;
+      else
+        h.box = {std::clamp(x0, 0.f, (float)W - 1), std::clamp(y0, 0.f, (float)H - 1),
+                 std::clamp(x1, 0.f, (float)W - 1), std::clamp(y1, 0.f, (float)H - 1), b.score};
       all.push_back(h);
     }
   }

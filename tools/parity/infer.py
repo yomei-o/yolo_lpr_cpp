@@ -71,13 +71,14 @@ def head_level(ocr_onnx, ref_dir):
     return ok, "onnxruntime vs fixture: worst %.3e, argmax %d/%d" % (worst, argok, len(outs))
 
 
-def pipeline_level(jlpr, img, det, ocr, spec, conf, det_kind):
+def pipeline_level(jlpr, img, det, ocr, spec, conf, det_kind, extra=()):
+    """extra: flags passed identically to both CLIs (--fmt, --corner, --rot-search, ...)."""
     c = json.loads(run([jlpr, "detect", "--img", img, "--det", det, "--ocr", ocr,
                         "--spec", spec, "--conf", str(conf), "--det-kind", det_kind,
-                        "--json"]).decode("utf-8"))
+                        "--json"] + list(extra)).decode("utf-8"))
     p = json.loads(run([sys.executable, os.path.join(ROOT, "tools", "infer.py"), "--img", img,
                         "--det", det, "--ocr", ocr, "--spec", spec, "--conf", str(conf),
-                        "--det-kind", det_kind, "--json"]).decode("utf-8"))
+                        "--det-kind", det_kind, "--json"] + list(extra)).decode("utf-8"))
     cp, pp = c["plates"], p["plates"]
     msgs, ok = [], True
     if len(cp) != len(pp):
@@ -118,7 +119,22 @@ def main():
     ap.add_argument("--spec", default=os.path.join(ROOT, "spec", "labels.txt"))
     ap.add_argument("--ref", default="")
     ap.add_argument("--conf", type=float, default=0.30)
+    # passed identically to both sides: the rotation search and the corner stage are checked by
+    # running this on a rotated photo with e.g. --fmt cxcywh --rot-search 0,30,-30 [--corner ...]
+    ap.add_argument("--fmt", default="")
+    ap.add_argument("--corner", default="")
+    ap.add_argument("--rot-search", dest="rot_search", default="")
+    ap.add_argument("--rot-fallback", dest="rot_fallback", action="store_true")
     a = ap.parse_args()
+    extra = []
+    if a.fmt:
+        extra += ["--fmt", a.fmt]
+    if a.corner:
+        extra += ["--corner", a.corner]
+    if a.rot_search:
+        extra += ["--rot-search", a.rot_search]
+    if a.rot_fallback:
+        extra += ["--rot-fallback"]
     if not os.path.exists(a.jlpr):
         print("no jlpr binary at %s — build it first (sh build/gcc.sh pure/jlpr.cpp -o jlpr.exe)" % a.jlpr)
         return 2
@@ -132,7 +148,7 @@ def main():
     else:
         print("head level:   skipped (pass --ref <lpr_cpp>/pure/ref to run it)")
 
-    ok, msgs = pipeline_level(a.jlpr, a.img, a.det, a.ocr, a.spec, a.conf, a.det_kind)
+    ok, msgs = pipeline_level(a.jlpr, a.img, a.det, a.ocr, a.spec, a.conf, a.det_kind, extra)
     print("pipeline level: %s" % ("MATCH" if ok else "DIFFER"))
     for m in msgs:
         sys.stdout.buffer.write((m + "\n").encode("utf-8"))

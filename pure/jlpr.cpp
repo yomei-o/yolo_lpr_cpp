@@ -2122,6 +2122,8 @@ static int cmd_rot_test(int argc, char** argv) {
   printf("rot-test: %zu hold-out plates x %zu angles, share %.2f, %s, corner=%s refine=%d\n",
          idxs.size(), angs.size(), share, oracle ? "ORACLE box" : "detector box",
          corner_p.empty() ? "none" : corner_p.c_str(), refine);
+  printf("rot-search %s%s, cam-dist %.2f\n", arg_of(argc, argv, "--rot-search", "0").c_str(),
+         rot_fallback ? " (fallback only)" : "", cam_dist);
   printf("%-16s %7s %7s %7s %8s\n", "roll:yaw:pitch", "found", "region", "|found", "warped");
   if (!dump.empty()) make_dir(dump);
   for (const Ang& a : angs) {
@@ -2367,7 +2369,7 @@ static int cmd_detect(int argc, char** argv) {
     cfg.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "416").c_str());
   }
   if (img.empty()) {
-    printf("usage: jlpr detect --img <file> [--det onnx] [--ocr onnx] [--out png] [--corner onnx] [--det-kind v8|yolox] [--fmt xyxy|cxcywh] [--conf f] [--single] [--json] [--rot-search 0,30,-30] [--refine N]\n");
+    printf("usage: jlpr detect --img <file> [--det onnx] [--ocr onnx] [--out png] [--corner onnx] [--det-kind v8|yolox] [--fmt xyxy|cxcywh] [--conf f] [--single] [--json] [--rot-search 0,30,-30] [--rot-fallback] [--refine N] [--corner2 onnx]\n");
     return 1;
   }
 
@@ -2397,8 +2399,9 @@ static int cmd_detect(int argc, char** argv) {
     corner2 = onx::load_onnx(arg_of(argc, argv, "--corner2", ""));
     ccfg.refine_net = &corner2;
   }
+  // --rot-fallback: rotated frames only when the upright pass found nothing (the WASM page's mode)
   std::vector<jl::PlateHit> hits = jl::find_plates(det, have_corner ? &corner : nullptr, im, W, H, cfg,
-                                                   ccfg, search);
+                                                   ccfg, search, has_flag(argc, argv, "--rot-fallback"));
   std::vector<jl::Box> boxes;
   std::vector<jl::Read> reads;
   if (!as_json)
