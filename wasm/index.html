@@ -64,6 +64,8 @@
       <option value="v6">新地名対応（十勝・日光・江戸川・安曇野・南信州を 76%／地名 95.1%）</option>
     </select>
   </label>
+  <label title="まっすぐ置いた向きで見つからないとき、画像を ±30° 回して探し直します（そのときだけ 3 倍かかります）">
+    <input type="checkbox" id="rot" checked> 傾いたナンバーも探す</label>
   <label>しきい値 <input type="range" id="conf" min="0.05" max="0.60" step="0.05" value="0.30">
     <span id="confv">0.30</span></label>
 </div>
@@ -226,7 +228,7 @@ function send(track, box) {
   busy = true;
   worker.postMessage({ type: 'frame', pixels: buf, w: cv.width, h: cv.height,
                        conf: +$('conf').value, tta: !track, detKind: detKind,
-                       track: track, box: box || null }, [buf]);
+                       track: track, box: box || null, rot: $('rot').checked }, [buf]);
 }
 
 function pump() {

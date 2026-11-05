@@ -32,7 +32,7 @@ class DetSample(object):
     pass
 
 
-def sample_det(rng, sp, n_bg, n_fonts, n_real=0, real_pct=0):
+def sample_det(rng, sp, n_bg, n_fonts, n_real=0, real_pct=0, geom=G.GEOM_DEFAULT):
     """Mirror of gen::sample_det — draw order is the contract (spec/gen.md, detection section)."""
     d = DetSample()
     np_ = rng.below(100)                                              # D1
@@ -44,7 +44,7 @@ def sample_det(rng, sp, n_bg, n_fonts, n_real=0, real_pct=0):
     d.plates = []
     for k in range(d.n_plates):
         pl = DetSample()
-        pl.p = G.sample(rng, sp)                                      # D6
+        pl.p = G.sample(rng, sp, geom)                                # D6
         pl.share = math.exp(rng.range(math.log(0.03), math.log(0.95)))  # D7
         pl.cx = rng.range(0.15, 0.85)                                 # D8
         pl.cy = rng.range(0.15, 0.85)                                 # D9
@@ -214,6 +214,7 @@ def main():
     ap.add_argument("--seed", type=int, default=12345)
     ap.add_argument("--meta-only", dest="meta_only", action="store_true")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--geom", default="", help="viewing-angle limits yaw,pitch,roll (default 35,20,8)")
     a = ap.parse_args()
 
     sp = L.load(a.spec)
@@ -236,7 +237,7 @@ def main():
     kept_total = neg_total = 0
     for i in range(a.start, a.start + a.count):
         rng = Rng((a.seed ^ ((i * 0x9E3779B97F4A7C15) & ((1 << 64) - 1)) ^ DET_SALT) & ((1 << 64) - 1))
-        d = sample_det(rng, sp, len(bgs), len(font_paths), len(reals), a.real_pct)
+        d = sample_det(rng, sp, len(bgs), len(font_paths), len(reals), a.real_pct, G.parse_geom(a.geom))
         place_det(d, a.imgsz)
         name = "det%06d.png" % i
         bg_name = os.path.basename(bgs[d.bg_idx]) if (d.bg_real and bgs) else "synth"

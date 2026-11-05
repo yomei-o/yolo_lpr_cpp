@@ -60,6 +60,9 @@ self.onmessage = async (e) => {
       const t0 = performance.now();
       let json;
       const bx = m.box || [-1, -1, -1, -1];      // a hand-drawn box skips the detector
+      // tilted plates: search +-30 deg frames when upright finds nothing. No extra corner pass:
+      // measured with `jlpr rot-test`, the cascade refinement lowers region accuracy.
+      if (M._jl_set_rotation) M._jl_set_rotation(m.rot ? 1 : 0, 0);
       if (m.track) {
         M._jl_track_step(p, m.w, m.h, m.conf, m.tta ? 1 : 0, m.detKind);
         json = M.UTF8ToString(M._jl_tracks());

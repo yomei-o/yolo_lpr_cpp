@@ -48,7 +48,7 @@ struct DetSample {
 // carry the actual plate typeface, lighting and dirt, which is what the detector needs: trained on
 // drawn plates only, it reached mAP50 0.99 on synthetic frames and still scored 0.1 on a real photo.
 inline DetSample sample_det(Rng& rng, const spec::Spec& sp, int n_bg, int n_fonts,
-                           int n_real = 0, int real_pct = 0) {
+                           int n_real = 0, int real_pct = 0, const Geom& geom = Geom()) {
   DetSample d;
   uint64_t np = rng.below(100);                                     // D1
   d.n_plates = np < 8 ? 0 : (np < 75 ? 1 : (np < 95 ? 2 : 3));
@@ -58,7 +58,7 @@ inline DetSample sample_det(Rng& rng, const spec::Spec& sp, int n_bg, int n_font
   d.bg_dark = rng.range(0.15, 0.85);                                // D5
   for (int k = 0; k < d.n_plates; ++k) {
     DetPlate pl;
-    pl.p = sample(rng, sp);                                         // D6: the 28 plate draws
+    pl.p = sample(rng, sp, geom);                                   // D6: the 28 plate draws
     double lo = std::log(0.03), hi = std::log(0.95);
     pl.share = std::exp(rng.range(lo, hi));                         // D7: log-uniform scale
     pl.cx = rng.range(0.15, 0.85);                                  // D8

@@ -380,7 +380,7 @@ inline Quad project_plate(const Params& p, double cx, double cy) {
     double x3 = x1 * std::cos(rz) - y2 * std::sin(rz), y3 = x1 * std::sin(rz) + y2 * std::cos(rz);
     c3[i][0] = x3; c3[i][1] = y3; c3[i][2] = z2;
   }
-  const double dist = W_mm * 3.0;                          // camera distance in mm
+  const double dist = W_mm * p.cam_dist;                   // camera distance in mm (plate widths)
   double f = 1.0;
   // choose f so the projected width matches plate_px
   double w_proj = 0;
