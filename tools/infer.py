@@ -10,6 +10,7 @@ Get one of these wrong and everything still "works" while reading the wrong plat
 """
 import io
 import json
+import math
 import os
 import sys
 
@@ -31,6 +32,10 @@ MARGINS = [-0.06, -0.03, 0.0, 0.03, 0.06, 0.10]
 CORNER_IN_PX = 64
 CORNER_EXPAND = 0.25
 WARP_MARGIN = 0.06
+# jl::CornerCfg::min_box_px — boxes narrower than this are read from the box crop, not rectified
+# (measured 2026-08-19: the corner net hurts on small or already-tight boxes; see pipeline.hpp)
+CORNER_MIN_BOX_PX = 90.0
+NMS_ROT = 0.45            # merging the same plate found at several search angles (find_plates)
 
 
 def load_rgb(path):
@@ -126,6 +131,42 @@ def corner_input(rgb, box, expand=CORNER_EXPAND, in_px=CORNER_IN_PX):
     return np.ascontiguousarray(v.transpose(2, 0, 1)[None]), (cx0, cy0, cx1, cy1)
 
 
+def rotate_frame(rgb, deg):
+    """Mirror of jl::rotate_frame: rotate by `deg` about the centre onto a canvas that holds all of
+    it (background 114). Returns (uint8 HxWx3, back) where back maps canvas pixels to original
+    pixels: x = back[0]*x' + back[1]*y' + back[2], y = back[3]*x' + back[4]*y' + back[5]."""
+    H, W, _ = rgb.shape
+    r = deg * 3.14159265358979 / 180.0          # the C++ literal, not math.pi: same corners
+    c, s = math.cos(r), math.sin(r)
+    OW = int(math.ceil(abs(W * c) + abs(H * s)))
+    OH = int(math.ceil(abs(W * s) + abs(H * c)))
+    icx, icy, ocx, ocy = W * 0.5, H * 0.5, OW * 0.5, OH * 0.5
+    back = (c, -s, icx - c * ocx + s * ocy, s, c, icy - s * ocx - c * ocy)
+    gx = np.arange(OW, dtype=np.float64)[None, :] + 0.5
+    gy = np.arange(OH, dtype=np.float64)[:, None] + 0.5
+    u = back[0] * gx + back[1] * gy + back[2] - 0.5
+    v = back[3] * gx + back[4] * gy + back[5] - 0.5
+    inside = ~((u < -0.5) | (v < -0.5) | (u > W - 0.5) | (v > H - 0.5))
+    val = _sample(rgb, u, v)
+    out = np.full((OH, OW, 3), 114, dtype=np.uint8)
+    out[inside] = np.clip(val[inside] + np.float32(0.5), 0, 255).astype(np.uint8)
+    return out, back
+
+
+def box_iou(a, b):
+    """Mirror of jl::box_iou (boxes as [x1,y1,x2,y2,...])."""
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    un = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / un if un > 0 else 0.0
+
+
+def parse_angles(s):
+    """"0,30,-30" -> [0.0, 30.0, -30.0] (the --rot-search argument, same parse as the C++ CLI)."""
+    return [float(t) for t in s.split(",") if t.strip()] if s else [0.0]
+
+
 # ---- onnxruntime sessions --------------------------------------------------------------------
 def _session(path, extra_outputs=()):
     import onnxruntime as ort
@@ -157,9 +198,12 @@ class Pipeline:
     """
 
     def __init__(self, det_path=None, ocr_path=None, spec_path=None, det_kind="yolox", v8_fmt="xyxy",
-                 corner_path=None):
+                 corner_path=None, corner2_path=None, refine=0):
         self.spec = L.load(spec_path or os.path.join(ROOT, "spec", "labels.txt"))
         self.corner = _session(corner_path) if corner_path else None
+        # jl::CornerCfg::refine / refine_net: extra corner passes on the already-rectified view
+        self.corner2 = _session(corner2_path) if corner2_path else None
+        self.refine = refine
         self.det_kind = det_kind
         self.v8_fmt = v8_fmt
         self.det = _session(det_path, DET_HEADS if det_kind == "yolox" else ()) if det_path else None
@@ -292,6 +336,9 @@ class Pipeline:
 
     # -- stage 2: corners -> rectified crop ---------------------------------------------------
     def predict_corners(self, rgb, box):
+        """Mirror of jl::predict_corners, including its size gate and the refine passes."""
+        if box[2] - box[0] < CORNER_MIN_BOX_PX:
+            return None                                # too small: the box crop is better
         x, win = corner_input(rgb, box)
         out = self.corner.run(None, {self.corner.get_inputs()[0].name: x})[0].reshape(-1)
         if out.size < 8:
@@ -300,7 +347,44 @@ class Pipeline:
         for i in range(4):
             c.append(float(win[0] + out[2 * i] * (win[2] - win[0])))
             c.append(float(win[1] + out[2 * i + 1] * (win[3] - win[1])))
+        for _ in range(self.refine):
+            c2 = self.refine_corners(rgb, c)
+            if c2 is None:
+                break
+            c = c2
         return c
+
+    def refine_corners(self, rgb, c, in_px=CORNER_IN_PX, expand=CORNER_EXPAND):
+        """Mirror of jl::refine_corners: run the corner net on the view rectified by the previous
+        estimate (plate framed exactly like a training crop) and map its answer back."""
+        net = self.corner2 if self.corner2 is not None else self.corner
+        S = in_px
+        lo = expand / (1 + 2 * expand) * S
+        hi = (1 + expand) / (1 + 2 * expand) * S
+        try:
+            Hm = solve_h_dst_to_src([(lo, lo), (hi, lo), (hi, hi), (lo, hi)],
+                                    [(c[0], c[1]), (c[2], c[3]), (c[4], c[5]), (c[6], c[7])])
+        except np.linalg.LinAlgError:
+            return None
+        g = np.arange(S, dtype=np.float64) + 0.5
+        xx, yy = np.meshgrid(g, g)
+        w = Hm[2, 0] * xx + Hm[2, 1] * yy + Hm[2, 2]
+        u = (Hm[0, 0] * xx + Hm[0, 1] * yy + Hm[0, 2]) / w - 0.5
+        v = (Hm[1, 0] * xx + Hm[1, 1] * yy + Hm[1, 2]) / w - 0.5
+        x = _sample(rgb, u, v) / np.float32(255.0)
+        x = np.ascontiguousarray(x.transpose(2, 0, 1)[None])
+        p = net.run(None, {net.get_inputs()[0].name: x})[0].reshape(-1)
+        if p.size < 8:
+            return None
+        out = []
+        for i in range(4):
+            px, py = float(p[2 * i]) * S, float(p[2 * i + 1]) * S
+            ww = Hm[2, 0] * px + Hm[2, 1] * py + Hm[2, 2]
+            if abs(ww) < 1e-12:
+                return None
+            out.append(float((Hm[0, 0] * px + Hm[0, 1] * py + Hm[0, 2]) / ww))
+            out.append(float((Hm[1, 0] * px + Hm[1, 1] * py + Hm[1, 2]) / ww))
+        return out
 
     def read_warped(self, rgb, corners):
         """One forward pass on the rectified crop — no TTA, because the framing is now fixed."""
@@ -324,24 +408,75 @@ class Pipeline:
         conf = [float(t[a] / t.sum()) if t.sum() > 0 else 0.0 for t, a in zip(total, arg)]
         return arg, conf, len(margins)
 
-    # -- both ---------------------------------------------------------------------------------
-    def run(self, rgb, imgsz=416, conf=0.15, tta=True, box=None):
-        if box:
-            boxes = [list(box) + [1.0]]
-        elif self.det_kind == "plateyolo":
-            boxes = self.detect_plateyolo(rgb, conf)
-        elif self.det_kind == "v8":
-            boxes = self.detect_v8(rgb, conf, fmt=self.v8_fmt)
-        else:
-            boxes = self.detect(rgb, imgsz, conf)
-        margins = MARGINS if tta else [0.0]
-        plates = []
-        for b in boxes:
-            if self.corner is not None:
-                corners = self.predict_corners(rgb, b)
-                arg, cf, crops = self.read_warped(rgb, corners) if corners else self.read(rgb, b, margins)
+    # -- rotation search (mirror of jl::find_plates / jl::read_hit) ----------------------------
+    def detect_any(self, rgb, imgsz=416, conf=0.15):
+        if self.det_kind == "plateyolo":
+            return self.detect_plateyolo(rgb, conf)
+        if self.det_kind == "v8":
+            return self.detect_v8(rgb, conf, fmt=self.v8_fmt)
+        return self.detect(rgb, imgsz, conf)
+
+    def find_plates(self, rgb, angles=(0.0,), imgsz=416, conf=0.15, only_if_empty=False):
+        """Detect (and corner, if a corner net is loaded) every plate, also looking in the frame
+        rotated by each listed angle. The detector alone loses a plate rolled 45 degrees (trained with
+        +-5 degree augmentation); in the frame rotated by -30 that plate is a 15-degree one.
+        Each hit: box (original image; the detector's own box for upright finds), quad (TL TR BR BL,
+        original image), cornered, angle, rbox (detector box in the rotated frame).
+        only_if_empty: stop at the first angle that finds anything (the WASM page's mode)."""
+        hits = []
+        H, W, _ = rgb.shape
+        for ang in angles:
+            if only_if_empty and hits:
+                break
+            if ang == 0:
+                im, back = rgb, (1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
             else:
-                arg, cf, crops = self.read(rgb, b, margins)
+                im, back = rotate_frame(rgb, ang)
+            for b in self.detect_any(im, imgsz, conf):
+                quad = self.predict_corners(im, b) if self.corner is not None else None
+                cornered = quad is not None
+                if not cornered:
+                    quad = [b[0], b[1], b[2], b[1], b[2], b[3], b[0], b[3]]
+                q = []
+                for i in range(4):
+                    x, y = quad[2 * i], quad[2 * i + 1]
+                    q += [back[0] * x + back[1] * y + back[2], back[3] * x + back[4] * y + back[5]]
+                if ang == 0:
+                    box = list(b[:5])
+                else:
+                    xs, ys = q[0::2], q[1::2]
+                    box = [min(max(min(xs), 0), W - 1), min(max(min(ys), 0), H - 1),
+                           min(max(max(xs), 0), W - 1), min(max(max(ys), 0), H - 1), b[4]]
+                hits.append({"box": box, "quad": q, "cornered": cornered, "angle": float(ang),
+                             "rbox": list(b[:5])})
+        hits.sort(key=lambda h: -h["box"][4])
+        keep = []
+        for h in hits:
+            if not any(box_iou(h["box"], k["box"]) > NMS_ROT for k in keep):
+                keep.append(h)
+        return keep
+
+    def read_hit(self, rgb, h, tta=True):
+        """Rectified when cornered; otherwise the box crop (+TTA) inside the frame the plate was
+        found in, where it stands nearly upright (measured: better than every corner variant)."""
+        if h["cornered"]:
+            return self.read_warped(rgb, h["quad"])
+        im = rgb if h["angle"] == 0 else rotate_frame(rgb, h["angle"])[0]
+        return self.read(im, h["rbox"], MARGINS if tta else [0.0])
+
+    # -- both ---------------------------------------------------------------------------------
+    def run(self, rgb, imgsz=416, conf=0.15, tta=True, box=None, rot_search=(0.0,), rot_fallback=False):
+        if box:
+            b = list(box) + [1.0]
+            q = [b[0], b[1], b[2], b[1], b[2], b[3], b[0], b[3]]
+            c = self.predict_corners(rgb, b) if self.corner is not None else None
+            hits = [{"box": b, "quad": c or q, "cornered": c is not None, "angle": 0.0, "rbox": b}]
+        else:
+            hits = self.find_plates(rgb, rot_search, imgsz, conf, rot_fallback)
+        plates = []
+        for h in hits:
+            b = h["box"]
+            arg, cf, crops = self.read_hit(rgb, h, tta)
             p = L.decode(self.spec, arg)
             plates.append({"box": [round(v, 1) for v in b[:4]], "det": round(b[4], 3),
                            "crops": crops, "text": p.text, "region": p.region, "cls": p.cls,
@@ -408,11 +543,18 @@ def main(argv):
     ap.add_argument("--det-kind", dest="det_kind", default="v8", choices=["yolox", "v8", "plateyolo"])
     ap.add_argument("--fmt", default="xyxy", choices=["xyxy", "cxcywh"],
                     help="v8 box layout: PlateYOLO(NMS stripped)=xyxy, plain Ultralytics export=cxcywh")
+    ap.add_argument("--rot-search", dest="rot_search", default="0",
+                    help="also look in the frame rotated by these angles, e.g. 0,30,-30 (tilted plates)")
+    ap.add_argument("--rot-fallback", dest="rot_fallback", action="store_true",
+                    help="rotated frames only when the upright pass found nothing (the WASM mode)")
+    ap.add_argument("--refine", type=int, default=0, help="extra corner-net passes on the rectified view")
+    ap.add_argument("--corner2", default="", help="corner net for the refine passes (default: --corner)")
     a = ap.parse_args(argv)
 
     rgb = load_rgb(a.img)
-    pipe = Pipeline(a.det, a.ocr, a.spec, a.det_kind, a.fmt, corner_path=(a.corner or None))
-    res = pipe.run(rgb, a.imgsz, a.conf, not a.single, a.box)
+    pipe = Pipeline(a.det, a.ocr, a.spec, a.det_kind, a.fmt, corner_path=(a.corner or None),
+                    corner2_path=(a.corner2 or None), refine=a.refine)
+    res = pipe.run(rgb, a.imgsz, a.conf, not a.single, a.box, parse_angles(a.rot_search), a.rot_fallback)
 
     if a.json:
         sys.stdout.buffer.write((format_json(res) + "\n").encode("utf-8"))

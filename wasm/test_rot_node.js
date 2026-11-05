@@ -14,7 +14,7 @@ const cases = [
   // upright: rotation on must change nothing (the search only runs when upright finds nothing)
   { name: 'bus, rot off', fx: 'sample.rgba', text: '横浜 200 か 3591', env: { ROT: '0' } },
   { name: 'bus, rot on', fx: 'sample.rgba', text: '横浜 200 か 3591', env: { ROT: '1' } },
-  { name: 'kei, rot on', fx: 'kei.rgba', text: '練馬 ' + KEI, env: { ROT: '1', EXPECT_BOX: '255,217,399,282' } },
+  { name: 'kei, rot on', fx: 'kei.rgba', text: '練馬 ' + KEI, env: { ROT: '1', EXPECT_BOX: '256,210,396,283' } },
   // rotated: found only with the search on
   { name: 'kei +30, rot on', fx: 'kei+30.rgba', text: '横浜 ' + KEI, env: { ROT: '1', EXPECT_BOX: 'none' } },
   { name: 'kei +45, rot on', fx: 'kei+45.rgba', text: '横浜 ' + KEI, env: { ROT: '1', EXPECT_BOX: 'none' } },

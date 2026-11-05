@@ -190,6 +190,8 @@ box が良くなるだけで地域名の信頼度が 0.57 → 0.92 に動く。*
 | 生成の地名指定 | `--region <n>\|sweep\|a-b` ✅ | 同じ ✅ | labels/meta がバイト一致（`--region sweep` で確認） |
 | 書体集合の固定 | `--fonts-strict` ✅ | 同じ ✅ | `spec/fonts.txt` の 2 書体だけで生成し、どのマシンでも同じ画になる |
 | 推論 | `infer.py`（onnxruntime） ✅ | 自前 ONNX ランナ ✅ | 同一画像で**同一文字列・同一 argmax**、box 差 0.10px / det 差 0.0000（実測）。自作側の float 加算誤差は認識器 3.3e-05・検出器 3e-03 なので、閾値ぎりぎりの box は割れる |
+| 回転探索（傾いたナンバー） | `infer.py --rot-search 0,30,-30 [--rot-fallback]` ✅ | `jlpr detect` 同じフラグ ✅ | 回した実写 14 枚 × 2 構成で**枚数・argmax が全一致、box 差 0.10px 以下**（`tools/parity/infer.py --rot-search ...`） |
+| 角度別ベンチ | `rot_test.py` ✅ | `jlpr rot-test` ✅ | 実ナンバー 144 枚で**同じ表**（45° で 98.6%、探索なしは 0%）。貼り込みの画素は PIL と自前サンプラで少し違う |
 | 評価（mAP / 全文一致 / 色別内訳） | `eval_det.py` / `eval_ocr.py` ✅ | `jlpr val --model det` / `jlpr val` ✅ | 同じ dir・同じ ONNX で mAP50・mAP50-95・P/R/F1・バケット別 recall が一致（実測差 **5e-07 以下**、`tools/parity/eval_det.py`）。`compute_ap` は ultralytics と**差 0** |
 | ONNX 出力 | `torch.onnx.export` | 自前エクスポータ | 出力 ONNX を相互に読み込んで **forward が 1e-5 以内** |
 | 疑似ラベル | `pseudo_label.py` ✅ | `jlpr pseudo-label` ✅ | 同じ検出器で同じ YOLO 形式を書く（書いたラベルを `jlpr val --model det` で読み返して検算） |

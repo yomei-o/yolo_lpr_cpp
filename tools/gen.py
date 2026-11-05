@@ -303,7 +303,7 @@ def project_plate(p, cx, cy):
         x3 = x1 * math.cos(rz) - y2 * math.sin(rz)
         y3 = x1 * math.sin(rz) + y2 * math.cos(rz)
         c3.append((x3, y3, z2))
-    dist = W_mm * 3.0
+    dist = W_mm * getattr(p, "cam_dist", 3.0)   # gen::Params::cam_dist (rot-test sets it; never drawn)
     # focal length chosen so the projected plate lands exactly plate_px wide (the C++ side does the
     # same in two passes, where only the first updates f)
     xs = [c[0] / (dist + c[2]) for c in c3]
