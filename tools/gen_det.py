@@ -133,7 +133,7 @@ def bg_files(bg_dir):
     return image_files(bg_dir)
 
 
-def render_det(d, sp, font_paths, bgs, imgsz, rng, reals=None):
+def render_det(d, sp, font_paths, bgs, imgsz, rng, reals=None, fallbacks=None):
     from PIL import Image, ImageFilter
     canvas = None
     if d.bg_real and bgs:
@@ -166,7 +166,7 @@ def render_det(d, sp, font_paths, bgs, imgsz, rng, reals=None):
             except Exception:
                 tex = None
         if tex is None:
-            tex = G.plate_texture(pl.p, sp, font_paths[pl.font_idx % len(font_paths)], rng)
+            tex = G.plate_texture(pl.p, sp, font_paths[pl.font_idx % len(font_paths)], rng, fallbacks or font_paths)
         coeffs = G._persp_coeffs(pl.quad, tex.size[0], tex.size[1])
         warped = tex.transform((imgsz, imgsz), Image.PERSPECTIVE, data=coeffs, resample=Image.BILINEAR)
         mask = Image.new("L", tex.size, 255).transform((imgsz, imgsz), Image.PERSPECTIVE,
@@ -219,6 +219,8 @@ def main():
 
     sp = L.load(a.spec)
     font_paths = G.font_files(a.fonts, a.font)
+    # --font pins the drawn face; glyphs it lacks are still borrowed from the whole set (as jlpr does)
+    fallbacks = G.font_files(a.fonts) if a.font else font_paths
     if not font_paths:
         raise SystemExit("no fonts in %s" % a.fonts)
     bgs = bg_files(a.bg)
@@ -247,7 +249,7 @@ def main():
         neg_total += 1 if d.n_plates == 0 else 0
         if a.meta_only:
             continue
-        img = render_det(d, sp, font_paths, bgs, a.imgsz, rng, reals)
+        img = render_det(d, sp, font_paths, bgs, a.imgsz, rng, reals, fallbacks)
         img.save(os.path.join(a.out, "images", name))
         # binary, so the newlines stay LF and match the C++ writer byte for byte on Windows too
         with open(os.path.join(a.out, "labels", name[:-4] + ".txt"), "wb") as lf:

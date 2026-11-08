@@ -13,6 +13,14 @@ both generators print a `note: font set differs from spec/fonts.txt` when the di
 
 Both are redistributable, which is the only reason they are here.
 
+**Droid has no ASCII.** `DroidSansFallbackFull.ttf` is a CJK *fallback* face: kana and kanji, but no
+digits or Latin letters. Until 2026-11 every Droid-drawn plate therefore had its serial and class number
+drawn as the .notdef box (about half of all synthetic samples). Both generators now borrow just the
+missing glyphs from the first face in the set that has them (GenSen) — `glyph_face` in
+`pure/gen_render.hpp`, `_glyph_face` in `tools/gen.py`. The face draw is unchanged, so labels and
+`meta.txt` are byte-identical to before; only the pixels of the Droid samples differ. The shipped
+`models/plate_ocr_v*.onnx` were trained on the old (boxed) pixels.
+
 ## Not committed, on purpose
 
 `python tools/fetch_fonts.py --include-system` copies the Japanese faces already installed on the

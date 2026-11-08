@@ -15,7 +15,7 @@ So step 1 is compared tightly (it only needs the batch and the forward to agree 
 later steps are compared **relatively**: 3% of the loss value. Measured on the shipped 9-head graph:
 step 1 diff 1e-6, steps 2-4 within 1% of the value while the loss falls 14.9 -> 7.0.
 
-  python tools/parity/train.py [--steps 5] [--batch 4] [--synth data/synth5k] [--alpr <root>]
+  python tools/parity/train.py [--steps 5] [--batch 4] [--synth data/synth5k] [--alpr <root> [--alpr-labels spec/alpr_labels.tsv]]
 """
 import argparse
 import os
@@ -53,6 +53,8 @@ def main():
     ap.add_argument("--init", default=os.path.join(ROOT, "models", "plate_ocr.onnx"))
     ap.add_argument("--synth", default=os.path.join(ROOT, "data", "synth5k"))
     ap.add_argument("--alpr", default="")
+    ap.add_argument("--alpr-labels", dest="alpr_labels", default="",
+                    help="e.g. spec/alpr_labels.tsv (needs --alpr): every head on the real crops")
     ap.add_argument("--steps", type=int, default=5)
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--lr", type=float, default=1e-4)
@@ -73,6 +75,8 @@ def main():
               "--batch", str(a.batch), "--lr", str(a.lr), "--seed", str(a.seed), "--dump-loss"]
     if a.alpr:
         common += ["--alpr", a.alpr]
+        if a.alpr_labels:
+            common += ["--alpr-labels", a.alpr_labels]
     cpp = run([a.jlpr, "train"] + common)
 
     # match the head count of the ONNX being trained: the shipped file has 9 heads, a v2 export has 11
@@ -85,6 +89,8 @@ def main():
     print("training %d-head graph %s" % (n_heads, os.path.basename(a.init)))
     if a.alpr:
         pyc += ["--alpr", a.alpr]
+        if a.alpr_labels:
+            pyc += ["--alpr-labels", a.alpr_labels]
     py = run([sys.executable, os.path.join(ROOT, "tools", "train_ocr.py")] + pyc)
 
     steps = sorted(set(cpp) & set(py))

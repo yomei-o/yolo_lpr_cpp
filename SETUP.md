@@ -40,6 +40,11 @@ sh tools/make_data.sh synth          # 認識器のデータだけ
   ディレクトリが違うと生成器が `note: font set differs from spec/fonts.txt` と言う。
   `make_data.sh` は `--fonts-strict`（= `spec/fonts.txt` の 2 書体だけ）で作るので、
   Windows 商用書体を入れてあるマシンでも**公開されている数字と同じデータ**になる
+- `DroidSansFallbackFull.ttf` には ASCII（数字・英字）が無い。2026-11 までは Droid が選ばれた版の
+  4 桁と分類番号が豆腐（□）で描かれていた（合成のおよそ半分）。いまは**その文字だけ集合内の別の書体
+  （GenSen）から借りて**描く（`gen_render.hpp` の `glyph_face`、`tools/gen.py` の `_glyph_face`）。
+  rng の draw は変えていないので labels / meta はバイト単位で前と同じ、Droid の版の画素だけが変わる。
+  出荷モデル（`plate_ocr_v*`）は豆腐の版で学習したもの
 - Windows の商用書体（`python tools/fetch_fonts.py --include-system`）は**未見書体での評価**に使う:
   `sh tools/make_data.sh unseen` → `data/region_sweep_unseen`。学習には使わない（再配布できないので
   他のマシンで再現できず、公開する数字の根拠にできない）。実測した差は 1.4 ポイントしかない
@@ -57,6 +62,13 @@ python tools/train_ocr.py --synth data/synth --alpr ../alpr_jp --steps 3000 --ba
 
 ./jlpr.exe train --init models/plate_ocr.onnx --synth data/synth --alpr ../alpr_jp \
   --steps 3000 --batch 64 --lr 4e-4 --export models/plate_ocr_new.onnx
+
+# 実写の全 head を教える（どちらの学習器にも --alpr-labels spec/alpr_labels.tsv を足す）
+#   - alpr_jp の 1273 枚を手で書き起こした分類番号・ひらがな・4 桁が入る（無いと実写は地名だけ）
+#   - 地名フォルダの無い 自家用(軽)/ 事業用/ 事業用(軽)/ の 553 枚（事業用の濃色地はここにしか無い）が加わる。
+#     元の 720 枚の後ろに足し、hold-out は別に切るので、元の 720 枚の分け方は変わらない
+#   - 自家用/大分/ に入っている長崎ナンバー 2 枚の地名を直す
+python tools/train_ocr.py --synth data/synth --alpr ../alpr_jp --alpr-labels spec/alpr_labels.tsv ...
 
 # 4隅回帰
 python tools/train_corner.py --synth data/synth --steps 3000 --batch 64 --export models/plate_corner_new.onnx

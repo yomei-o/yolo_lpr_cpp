@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <array>          // std::array is used below; MSVC 14.31 does not pull it in transitively
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string>
@@ -197,12 +198,79 @@ inline std::vector<Item> read_synth(const std::string& root, bool teach_region,
   return items;
 }
 
-// alpr_jp: <root>/<category>/<地名>/*.png — the folder name is the only label.
-inline std::vector<Item> read_alpr(const std::string& root, const spec::Spec& sp) {
+// spec/alpr_labels.tsv — a hand transcription of every alpr_jp crop (see the file's header). Same
+// rules as read_alpr_labels() in tools/train_ocr.py: an unreadable or out-of-spec character masks
+// only its own head. region: -2 = keep the folder's, -1 = not readable (masked), else a class index.
+struct AlprLabel {
+  int region = -2;
+  std::vector<std::pair<int, int>> heads;       // (head index, class)
+};
+
+inline std::map<std::string, AlprLabel> read_alpr_labels(const std::string& path, const spec::Spec& sp) {
+  std::map<std::string, AlprLabel> table;
+  std::vector<unsigned char> blob = read_file(path);
+  if (blob.empty()) { printf("cannot read %s\n", path.c_str()); std::exit(1); }
+  std::vector<std::string> order;
+  for (const spec::Group* g : sp.of_kind("head")) order.push_back(g->name);
+  auto head_of = [&](const std::string& n) {
+    for (size_t i = 0; i < order.size(); ++i) if (order[i] == n) return (int)i;
+    return -1;
+  };
+  auto put = [&](AlprLabel& L, const std::string& head, const std::string& token) {
+    int h = head_of(head), c = sp.index_of(head, token);
+    if (h >= 0 && c >= 0) L.heads.push_back({h, c});
+  };
+  std::istringstream in(std::string(blob.begin(), blob.end()));
+  std::string line;
+  while (std::getline(in, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line.empty() || line[0] == '#') continue;
+    std::vector<std::string> f;
+    size_t p0 = 0;
+    for (;;) {
+      size_t t = line.find('\t', p0);
+      f.push_back(line.substr(p0, t == std::string::npos ? std::string::npos : t - p0));
+      if (t == std::string::npos) break;
+      p0 = t + 1;
+    }
+    f.resize(5);
+    const std::string &key = f[0], &region = f[1], &cls = f[2], &hira = f[3], &num = f[4];
+    AlprLabel L;
+    if (!region.empty()) L.region = sp.index_of("region", region);   // "?" or unknown -> -1
+    // class number: ASCII, 1-3 characters, padded with <blank>
+    if (cls != "?" && !cls.empty() && cls.size() <= 3) {
+      static const char* hn[3] = {"class_num_01", "class_num_02", "class_num_03"};
+      for (size_t i = 0; i < 3; ++i) put(L, hn[i], i < cls.size() ? std::string(1, cls[i]) : "<blank>");
+    }
+    put(L, "hiragana", hira);
+    // serial: 4 ASCII characters, '.' = blank slot
+    if (num.size() == 4) {
+      static const char* hn[4] = {"plate_num_01", "plate_num_02", "plate_num_03", "plate_num_04"};
+      for (size_t i = 0; i < 4; ++i) put(L, hn[i], num[i] == '.' ? "<blank>" : std::string(1, num[i]));
+    }
+    table[key] = std::move(L);
+  }
+  return table;
+}
+
+inline void apply_label(Item& it, const AlprLabel& L) {
+  for (const auto& hc : L.heads) { it.heads[(size_t)hc.first] = hc.second; it.mask[(size_t)hc.first] = 1.f; }
+}
+
+// alpr_jp: <root>/<category>/<地名>/*.png — the folder name is the only label, unless `labels`
+// (spec/alpr_labels.tsv) is given: then every transcribed head is taught, misfiled regions are
+// corrected, and the crops alpr_jp files with no region folder (自家用(軽)/ 事業用/ 事業用(軽)/, 553
+// of them, every dark 事業用 plate among them) are appended *after* the region-folder ones.
+// `n_folder` receives how many region-folder crops come first, so the caller can split the two
+// parts separately and the original hold-out does not move.
+inline std::vector<Item> read_alpr(const std::string& root, const spec::Spec& sp,
+                                   const std::string& labels = "", size_t* n_folder = nullptr) {
   static const char* cats[] = {"\xE8\x87\xAA\xE5\xAE\xB6\xE7\x94\xA8",                         // 自家用
-                               "\xE8\x87\xAA\xE5\xAE\xB6\xE7\x94\xA8(\xE8\xBD\xBB)",           // 自家用(軽)
+                               "\xE8\x87\xAA\xE5\xAE\xB6\xE7\x94\xA8(\xE8\xBB\xBD)",           // 自家用(軽)
                                "\xE4\xBA\x8B\xE6\xA5\xAD\xE7\x94\xA8",                         // 事業用
-                               "\xE4\xBA\x8B\xE6\xA5\xAD\xE7\x94\xA8(\xE8\xBD\xBB)"};          // 事業用(軽)
+                               "\xE4\xBA\x8B\xE6\xA5\xAD\xE7\x94\xA8(\xE8\xBB\xBD)"};          // 事業用(軽)
+  // (軽 is E8 BB BD. Until 2026-11 this read E8 BD BB — 轻, the simplified form — so the two kei
+  // folders were never opened; harmless then, since neither has region sub-folders.)
   std::vector<Item> items;
   std::string R = root;
   if (!R.empty() && R.back() != '/' && R.back() != '\\') R += '/';
@@ -229,6 +297,36 @@ inline std::vector<Item> read_alpr(const std::string& root, const spec::Spec& sp
     }
   }
   std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.key < b.key; });
+  if (n_folder) *n_folder = items.size();
+  if (labels.empty()) return items;
+
+  std::map<std::string, AlprLabel> table = read_alpr_labels(labels, sp);
+  size_t hit = 0;
+  for (Item& it : items) {
+    auto L = table.find(it.key);
+    if (L == table.end()) continue;
+    ++hit;
+    if (L->second.region == -1) { it.heads[0] = 0; it.mask[0] = 0.f; }
+    else if (L->second.region >= 0) it.heads[0] = L->second.region;
+    apply_label(it, L->second);
+  }
+  size_t n0 = items.size();
+  std::set<std::string> present;                // files sitting directly in a category folder
+  for (const char* c : cats)
+    for (const std::string& f : list_dir(R + c, false)) present.insert(std::string(c) + "/" + f);
+  for (const auto& kv : table) {                // std::map: already in key order
+    if (!present.count(kv.first)) continue;
+    Item it;
+    it.path = R + kv.first;
+    it.key = kv.first;
+    it.heads.assign(11, 0);
+    it.mask.assign(11, 0.f);
+    if (kv.second.region >= 0) { it.heads[0] = kv.second.region; it.mask[0] = 1.f; }
+    apply_label(it, kv.second);
+    items.push_back(std::move(it));
+  }
+  printf("alpr labels: %zu of %zu region-folder crops transcribed, +%zu flat-folder crops (%s)\n", hit,
+         n0, items.size() - n0, labels.c_str());
   return items;
 }
 
@@ -327,6 +425,7 @@ inline double eval_region(onx::Trainable& t, const std::vector<Item>& ds, const 
   int n = 0, ok = 0;
   for (size_t k = 0; k < idxs.size() && (limit <= 0 || n < limit); ++k) {
     const Item& it = ds[(size_t)idxs[k]];
+    if (it.mask[0] == 0.f) continue;            // region not known for this crop (alpr_labels "?")
     std::vector<float> v = load_input(it, EVAL_MARGIN);
     Tensor x = from_data({1, 3, 128, 128}, v);
     auto vals = onx::forward(t, x);

@@ -105,10 +105,57 @@ class SynthSet:
         return self.load(i, self.margin(rng))
 
 
-class AlprSet:
-    """Real crops from alpr_jp: only the region head is labelled, the rest is masked."""
+def split_holdout(n, hold_out):
+    """Deterministic hold-out split, same shuffle as trn::split_holdout (splitmix64, seed 11)."""
+    rng = Rng(11)
+    order = list(range(n))
+    for i in range(len(order) - 1, 0, -1):
+        j = rng.below(i + 1)
+        order[i], order[j] = order[j], order[i]
+    cut = int(len(order) * (1 - hold_out))
+    return sorted(order[:cut]), sorted(order[cut:])
 
-    def __init__(self, root, spec, hold_out=0.2):
+
+def read_alpr_labels(path, spec):
+    """spec/alpr_labels.tsv: a hand transcription of every alpr_jp crop, so the real data teaches all
+    heads instead of the region only. key = "<category>/<region>/<file>" for the region folders and
+    "<category>/<file>" for the flat ones. Returns {key: (region, {head index: class})}; region is
+    "" (keep the folder's), None (not readable: masked) or a class index. Same rules as
+    trn::read_alpr_labels — an unreadable or out-of-spec character masks only its own head."""
+    order = [g.name for g in spec.of_kind("head")]
+    tok = {g.name: g.tok for g in spec.of_kind("head")}
+    table = {}
+    for line in open(path, encoding="utf-8"):
+        line = line.rstrip("\r\n")
+        if not line or line.startswith("#"):
+            continue
+        key, region, cls, hira, num = (line.split("\t") + [""] * 5)[:5]
+        reg = "" if region == "" else (tok["region"].index(region) if region in tok["region"] else None)
+        lab = {}
+        if cls != "?" and 1 <= len(cls) <= 3:
+            for h, ch in zip(("class_num_01", "class_num_02", "class_num_03"),
+                             list(cls) + ["<blank>"] * (3 - len(cls))):
+                if ch in tok[h]:
+                    lab[order.index(h)] = tok[h].index(ch)
+        if hira in tok["hiragana"]:
+            lab[order.index("hiragana")] = tok["hiragana"].index(hira)
+        if len(num) == 4:
+            for h, ch in zip(("plate_num_01", "plate_num_02", "plate_num_03", "plate_num_04"), num):
+                t = "<blank>" if ch == "." else ch
+                if t in tok[h]:
+                    lab[order.index(h)] = tok[h].index(t)
+        table[key] = (reg, lab)
+    return table
+
+
+class AlprSet:
+    """Real crops from alpr_jp. Without `labels` only the region head is labelled (the folder name)
+    and the rest is masked. With `labels` (spec/alpr_labels.tsv) every transcribed head is taught,
+    the folder's region can be corrected, and the 553 crops alpr_jp files *without* a region folder
+    (自家用(軽)/, 事業用/, 事業用(軽)/ — every dark 事業用 plate among them) are added after the
+    region-folder crops, with their own hold-out split so the original one does not move."""
+
+    def __init__(self, root, spec, hold_out=0.2, labels=""):
         self.spec = spec
         reg = spec.head("region")
         self.items = []
@@ -131,14 +178,30 @@ class AlprSet:
                         # different hold-out splits.
                         self.items.append((os.path.join(rd, f), idx, "%s/%s/%s" % (cat, name, f)))
         self.items.sort(key=lambda t: t[2])
-        rng = Rng(11)                                   # deterministic split, shared prng
-        order = list(range(len(self.items)))
-        for i in range(len(order) - 1, 0, -1):
-            j = rng.below(i + 1)
-            order[i], order[j] = order[j], order[i]
-        cut = int(len(order) * (1 - hold_out))
-        self.train_idx = sorted(order[:cut])
-        self.val_idx = sorted(order[cut:])
+        self.train_idx, self.val_idx = split_holdout(len(self.items), hold_out)
+        self.lab = {}
+        if labels:
+            table = read_alpr_labels(labels, spec)
+            for k, (path, idx, key) in enumerate(self.items):
+                if key in table:
+                    r, heads = table[key]
+                    if r != "":
+                        self.items[k] = (path, -1 if r is None else r, key)
+                    self.lab[key] = heads
+            flat = []
+            for key in sorted(table):
+                cat, _, f = key.partition("/")
+                if cat in CATEGORIES and "/" not in f and os.path.isfile(os.path.join(root, cat, f)):
+                    r, heads = table[key]
+                    flat.append((os.path.join(root, cat, f), -1 if r in ("", None) else r, key))
+                    self.lab[key] = heads
+            n0 = len(self.items)
+            tr, va = split_holdout(len(flat), hold_out)
+            self.items += flat
+            self.train_idx += [n0 + i for i in tr]
+            self.val_idx += [n0 + i for i in va]
+            print("alpr labels: %d of %d region-folder crops transcribed, +%d flat-folder crops (%s)"
+                  % (sum(1 for it in self.items[:n0] if it[2] in self.lab), n0, len(flat), labels))
 
     def margin(self, rng):
         # Three draws, in this order: crop margin, brightness, contrast. The C++ trainer draws the
@@ -153,8 +216,11 @@ class AlprSet:
         x = load_crop(path, None, margin)
         x = np.clip(((x - 0.5) * contrast + 0.5) * bright, 0.0, 1.0).astype(np.float32)
         heads = [0] * 11
-        heads[0] = region
-        mask = [1] + [0] * 10                           # region only
+        mask = [0] * 11
+        if region >= 0:                                 # -1: region not readable / not known
+            heads[0], mask[0] = region, 1
+        for h, v in self.lab.get(self.items[i][2], {}).items():
+            heads[h], mask[h] = v, 1
         return x, heads, mask
 
     def get(self, i, rng):
@@ -214,6 +280,8 @@ def eval_region(model, ds, order, idxs, device, limit=0):
     *baseline* look 8 points worse (84.0% instead of 91.7%) and every comparison noisy."""
     model.eval()
     n = ok = 0
+    if isinstance(ds, AlprSet):
+        idxs = [i for i in idxs if ds.items[i][1] >= 0]     # skip crops whose region is unknown
     for i in (idxs[:limit] if limit else idxs):
         x, heads, _ = ds.load(i, (EVAL_MARGIN, 1.0, 1.0) if isinstance(ds, AlprSet) else EVAL_MARGIN)
         out = model(torch.from_numpy(x[None]).float().to(device))
@@ -276,6 +344,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--synth", action="append", default=[], help="generated dir (repeatable)")
     ap.add_argument("--alpr", default="", help="alpr_jp checkout root")
+    ap.add_argument("--alpr-labels", dest="alpr_labels", default="",
+                    help="spec/alpr_labels.tsv: teach every head on the real crops, correct misfiled "
+                         "regions and add the 553 flat-folder (kei / commercial) crops")
     ap.add_argument("--init", default=os.path.join(ROOT, "models", "plate_ocr.onnx"))
     ap.add_argument("--spec", default=os.path.join(ROOT, "spec", "labels.txt"))
     ap.add_argument("--steps", type=int, default=500)
@@ -329,9 +400,9 @@ def main():
     uncovered = set()
     alpr = None
     if a.alpr:
-        alpr = AlprSet(a.alpr, sp)
+        alpr = AlprSet(a.alpr, sp, labels=a.alpr_labels)
         alpr.pick = lambda rng: alpr.train_idx[rng.below(len(alpr.train_idx))]
-        covered = {alpr.items[i][1] for i in alpr.train_idx}
+        covered = {alpr.items[i][1] for i in alpr.train_idx} - {-1}
         uncovered = {i for i in range(sp.head("region").n) if i not in covered}
         print("real data covers %d of %d regions; synthetic will teach the other %d (incl. the 2025 "
               "additions)" % (len(covered), sp.head("region").n, len(uncovered)))

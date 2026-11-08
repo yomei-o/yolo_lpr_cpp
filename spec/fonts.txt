@@ -6,6 +6,9 @@
 # faces existed, while a Windows box that ran `fetch_fonts.py --include-system` has four. The
 # generators print a warning when the present set differs from this list.
 #
+# DroidSansFallbackFull has no ASCII: digits and Latin letters are borrowed per glyph from the first face
+# here that has them (GenSen) — see fonts/README.md. Before 2026-11 they were drawn as .notdef boxes.
+#
 # One name per line, in the order the generators offer them. `#` comments and blank lines are ignored.
 GenSenRounded2-B.ttc
 DroidSansFallbackFull.ttf

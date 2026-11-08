@@ -1,0 +1,1287 @@
+# Hand transcription of every dyama/alpr_jp plate crop (alpr_jp is MIT; the images stay at their source).
+# Read by `jlpr train --alpr-labels` and `tools/train_ocr.py --alpr-labels`; without it the real crops
+# teach the region head only (from the folder name) and the 553 crops filed without a region folder
+# are not used at all.
+#
+# key     <category>/<region>/<file> (region folders) or <category>/<file> (自家用(軽)/ 事業用/ 事業用(軽)/)
+# region  empty = the folder's name; a name = what the plate actually shows (2 Nagasaki plates are
+#         filed under 自家用/大分/); ? = not readable (region head masked)
+# cls     class number, 2-3 characters
+# hira    hiragana
+# num     4-digit serial, . = blank slot (・)
+# ? (whole field or one character) = not readable: only that head is masked.
+#
+# key	region	cls	hira	num
+事業用(軽)/41bb00904aff1ffccd0a7f60bb37c807.jpg	福山	480	り	4144
+事業用(軽)/4cdb2e19fcfd8b4eb9ad3756078ee391.jpg	福山	480	け	5802
+事業用(軽)/9f595d492904f4daea04c2e5c422a2c4.jpg	富士山	499	ろ	3776
+事業用(軽)/a46dbf4a07557613f125597fadd509d1.jpg	福山	480	?	4144
+事業用(軽)/c2b7df9bb2e2bfc1d38499393e655cd5.png	北九州	480	り	5261
+事業用(軽)/dec2ac2d710909c6f8a6c1984c98eec5.png	佐世保	480	り	.970
+事業用(軽)/e68798adc77bde8f724d98c8a49116f6.jpg	佐世保	480	り	1240
+事業用(軽)/f09b962ad717433cfccc5e9d3672074c.jpg	佐世保	480	り	1694
+事業用(軽)/icqjcchhkfhdd6duccmg.png	福山	480	り	2194
+事業用(軽)/nitzbaqtqwnk3ewfcfa5.png	福山	480	り	4144
+事業用/01ab0a8bd963f2c7fc7e2f62f45a5603.jpg	佐世保	500	あ	1330
+事業用/01f3eb7784bcde66b77279bd331f8fcf.png	福岡	230	あ	.605
+事業用/06c4c453aa68dfbe0b70bb3cc843b0c9.png	福山	100	か	8441
+事業用/09a532261d275c80e5497aeb560957a7.png	福山	100	か	9351
+事業用/0c4811ea0804adc7390e260b6daeafe4.png	熊本	200	か	1112
+事業用/0d3c4528377da0005a871ff7d4fab49b.png	横浜	500	い	1335
+事業用/0e31cf027e1c2493eb08693f72598521.png	福岡	200	か	1260
+事業用/0f2df36b7a8f4f70a531c37439eff59c.png	佐賀	230	あ	.612
+事業用/119374b7fb957f551179a38f57336d39.jpg	佐世保	500	あ	1330
+事業用/13d5fa249a579b2b2097b7f97f5bb8db.png	福岡	200	か	.686
+事業用/13eb55c35552e3e1159b18ec991f3ccf.png	習志野	200	か	1695
+事業用/1407cc6b7cb055482f0f8f32ca2ab80a.png	福山	400	あ	1461
+事業用/165bd1d87560ec4876d93dbdb222b0fe.jpg	?	?	?	1330
+事業用/1bf6bdef43517b20630aec8a66d52ddb.png	佐賀	230	あ	.501
+事業用/24090b85c7472182837b6626c89bff83.png	長崎	200	か	.720
+事業用/25b455d4844746df77c6f1f771a31899.png	足立	233	か	.168
+事業用/25f01421.png	?	?	?	.547
+事業用/27808b5001fb85045ed1989c0049249b.png	久留米	230	い	.168
+事業用/29698d34e108f4036a5910b4f5fe66f6.png	福岡	200	か	.684
+事業用/29778876593486d0cdc4985e8de2ae49.png	筑豊	200	か	.468
+事業用/2a8f407b5ad1ae565f16d09f16874187.png	福岡	200	か	3375
+事業用/2af27cb112880875cc131e1dba6555d5.png	熊本	200	か	1348
+事業用/31f4868f9589a845afd3ea249a6622a0.jpg	?	11	?	8389
+事業用/34502e16e888600337c70cf11383e78a.png	福山	100	あ	6994
+事業用/38a59b6fcc498ee7b13e71de67144d6f.jpg	佐世保	500	あ	1339
+事業用/38faa2538aa8f68cf28527d2cb6466b7.png	福岡	230	あ	.773
+事業用/3a80a5efe55ee829154bd6fdaab96933.png	佐世保	200	か	.498
+事業用/3b255e1322e22432028b07771c3b71a3.png	熊本	200	か	1385
+事業用/3e19e45484bc4e2accb6c7153fe5de6f.png	佐賀	230	あ	.501
+事業用/3f90ce97acba2d67c6155859ff23704e.png	久留米	200	あ	...1
+事業用/42d5e7ff5be4f8a7f628e2a483108c77.jpg	佐世保	500	あ	1590
+事業用/43de8149da2ac866c264d3d0bd1d7401.png	筑豊	200	か	.565
+事業用/498bc51a91e24363d9e85785f2149f29.png	長崎	200	か	1179
+事業用/4c8de45fc6da999efd8d7a7bd509d1eb.png	湘南	200	か	1452
+事業用/4e683f68db98bad93c7c42e85f5d79db.png	福岡	230	く	2215
+事業用/520b8b9d641ba08478cdfea3a0754ada.png	熊本	200	か	1368
+事業用/5241e793.png	佐世保	500	あ	1348
+事業用/58531b3a31fa3ff2e75d20ca9e49d85d.png	福岡	200	か	4194
+事業用/591dd1d118e43e119874ee7e6144d72d.png	熊本	200	か	.691
+事業用/5dc6096432ad98ef9a37883e8ebb0d46.png	福岡	200	か	4194
+事業用/5eaafdf47ceced0a1b10619ec86fd085.jpg	福山	100	あ	5344
+事業用/5f7871e8bcadc47f38f8f95b2f91fd90.png	福山	130	を	..19
+事業用/61a400993ccee3f5aa73db40ee729700.png	福岡	200	か	.686
+事業用/660b005cfa022540e24725728a3ad74a.png	佐賀	200	か	.558
+事業用/679zuisu7y5yn7mwxv6x.png	福山	100	あ	6994
+事業用/6984069d8fa008030aff86b8f314df4d.jpg	福山	100	あ	5937
+事業用/6a6feffb47d1b34d69274cee947ba059.jpg	富士山	599	あ	3776
+事業用/6ab4b569501298b201bba4eaecc4aa50.png	佐賀	200	か	.451
+事業用/6b4e68e8d2f3262cc3bd703a5069f58a.jpg	長崎	230	あ	1585
+事業用/71b5ddfff013e11910f976b5d06c1ff7.png	山口	200	あ	.154
+事業用/74c2b5c8fa647eb807753629ade0241b.png	?	500	あ	.402
+事業用/79384242990cb04ac58055b6f17c95b9.png	福岡	230	あ	.773
+事業用/7a33740d93a178ac71b5b3626dc6bd19.png	福岡	230	あ	.605
+事業用/7bf062b064244889ba8f3acdd9e8c084.png	熊本	200	か	1368
+事業用/7c3892119520ba671efbac7a373b683a.png	長崎	100	あ	2932
+事業用/83b8f3b9cb9f4da9efbdb0fc6e1a85e4.png	久留米	200	あ	...3
+事業用/846e7cfcf306831dc7ef6f18cd25eb4a.png	久留米	200	あ	...3
+事業用/860822770bc80f5da797e4e2e04aded9.png	福岡	200	か	1264
+事業用/873b2c62059c75e479df1c5194caaeb2.png	筑豊	200	か	.468
+事業用/8770e6a66b96a99657c278c31f6c0183.png	広島	230	い	.800
+事業用/87f0156409498281252b6b803c1f9e8d.png	奈良	100	か	3014
+事業用/8822a21ee74a458e8bd1eebef3c5ab53.jpeg	長崎	200	か	.977
+事業用/8d0cc8636ac604a4d4b66c3e20319015.png	福岡	200	か	2107
+事業用/8e5542a58edecd0b913786db087deb56.png	福岡	200	か	1401
+事業用/8eb8cc039e4c9381eb10899ac5e2346b.png	佐賀	230	あ	.612
+事業用/8fa95e3443ad81f3c275c8a9f7020b64.png	熊本	200	か	1317
+事業用/93b47d146ae55e39c745b4a1b2408edb.jpg	佐世保	500	あ	1650
+事業用/9a0bb61215cf9a58dedc59deb8ccb650.png	福岡	200	か	4199
+事業用/9aa9181a30f69fdf41a1597a2d1ee7f1.jpg	福山	400	あ	1461
+事業用/9ed07f6f9003a815aa86ddf8650ee7f8.png	福岡	200	か	1283
+事業用/En42jGbIwLjUIJWTR4RamZxT4.png	佐世保	500	あ	1357
+事業用/WIN_20191023_17_37_23_Pro.png	佐世保	500	あ	1581
+事業用/WIN_20191023_17_39_40_Pro.png	佐世保	500	あ	1486
+事業用/a20e8cef6770ef5c3c340dfa352a2dd1.png	福山	130	あ	2324
+事業用/a4bc97fdeaf2817b109f4503160f8390.png	福山	131	き	...9
+事業用/a58f585b2272e5f49577f631b485d686.png	佐賀	200	か	.451
+事業用/a5e94265ae0d04600893e1f040f87851.png	?	?	?	.110
+事業用/a6796c87c7dbfd659418db1e971f29a4.png	長崎	200	か	1177
+事業用/a6f29fc029d305759ddc2e5aada64c23.png	佐賀	200	か	.778
+事業用/a8e6cbaa6316673b70b79a92a34c0195.png	熊本	230	け	3888
+事業用/ab1efd965249b240cc4405e5adaf9467.jpg	?	11	?	8389
+事業用/ac109e444dd22c80b77e3dde819a83fb.png	久留米	200	あ	...1
+事業用/ad19e9471be3183535ea5e8b245175e0.png	福岡	200	か	.684
+事業用/aeed7b256325792fadd894f12ae145fe.png	福岡	230	く	2215
+事業用/b6fe352629b802cbdac24f31d3d0f85a.png	広島	230	う	.801
+事業用/b865f4d6ab1c8b64875f704b89375dd3.jpg	佐世保	500	あ	1590
+事業用/b8ce0404723569eedff73da80bd8604e.jpg	佐世保	500	あ	1339
+事業用/b9762e9b1c587e9b0638dc0e8e82b8f0.png	熊本	230	け	3888
+事業用/c1ad488906266221f50c97d7d6d17ad8.png	福山	100	?	8441
+事業用/c4e957b6c11f83cb4003011ab82cc14e.png	福山	130	を	..19
+事業用/c502b9911c8696781b414b3660b19f98.png	熊本	200	か	1317
+事業用/c5f0b14ef14e8f98649476f3e6589cdb.png	福山	800	か	1038
+事業用/ca9c37720dd55a79fb804939d0cf5389.png	熊本	200	か	1133
+事業用/cb189343ccb4d1564044dc9889c7ce1b.png	佐世保	200	か	.498
+事業用/cd415fe6966ba8c6e2a2fa4accdb28a2.jpg	佐世保	500	あ	1590
+事業用/cuPuSPccy6nwTGijUg6u9YfHM.png	佐世保	500	あ	1581
+事業用/d0f31308294203dc7e69ea4563bcde00.png	福岡	200	あ	.209
+事業用/d291e664624c8152cbf2ce850fe30e56.png	横浜	200	か	2376
+事業用/d294f262a34367965bb5a0098db504e8.jpg	佐世保	100	あ	.911
+事業用/d59c3f8243ed7f71ef9c98f28e344240.png	倉敷	130	あ	.611
+事業用/d74f933954d7703091fc51b54dc0a68d.jpg	練馬	530	い	.700
+事業用/d75e1402.png	?	100	?	2848
+事業用/dd085e64b96c2cc24649c554fa657e53.png	福山	100	あ	6994
+事業用/e168836935240bf1fd3ed2bea6f9d82b.png	筑豊	200	か	.645
+事業用/e2b89b2c55a71438a90e28fd28e6862f.png	山口	200	あ	.154
+事業用/e3713d3c9683bf9c268752252789037a.png	山口	200	あ	.154
+事業用/e9b449fba23dd4b974e763d292eb5736.png	筑豊	200	か	.565
+事業用/ea97aa8af550a4e3f7c87b1b94887d9a.png	福山	100	あ	6820
+事業用/ee7f6617a9da4b3b8a50b9db054c1c15.png	久留米	230	い	.168
+事業用/f2036abd115a87bad6dcc4c1e6ec2d79.png	福岡	200	か	2950
+事業用/f6b2e034a2e5d8fa3402f3b6a5377379.png	筑豊	200	か	.645
+事業用/f9d520179391b73d62ee294d18bf18d0.png	熊本	200	か	1385
+事業用/fb59006f9b8a5f111b9de24a3395a083.png	福岡	200	か	1401
+事業用/fb67e04b12c317229591d530b9505351.jpeg	なにわ	130	あ	7504
+事業用/fd6065bcec7d8f32b073d730e3e980a1.jpg	福山	400	あ	1461
+事業用/fe599e06.png	佐世保	100	?	5357
+事業用/fe903301.png	佐世保	200	か	.443
+事業用/ffb4fdeb85e9b03fd843e5db1e068eb6.png	熊本	200	か	1348
+事業用/re9gfscftmujzq2sva82.png	福山	400	あ	1461
+事業用/vr2fc3hpfduja9k3msjf.png	福山	100	か	8983
+自家用(軽)/001be4bb8d5a0df034a1cdf9fb78f39e.png	福山	483	あ	1945
+自家用(軽)/002fdd0e5c96671a775f3fe6885f787d.png	福山	480	こ	8321
+自家用(軽)/0046c5d58421c63f2c0303ff21bbb424.png	大分	580	ほ	5489
+自家用(軽)/00fb11d9f49b40c7e007578d6ec9da9d.png	福山	480	あ	7857
+自家用(軽)/01b822bf8be8cb38a4d7e6a76cff2f1d.jpg	佐世保	580	せ	4260
+自家用(軽)/033968e836d783e6eb5b1a578410fe1e.png	長崎	585	ぬ	1217
+自家用(軽)/0569359d4dddfe07b640056005d93e6b.png	福山	583	さ	8020
+自家用(軽)/056ffc224844780551ac6f57c7b5d158.jpg	福山	480	け	7950
+自家用(軽)/084c80aa6c24691e4210819d8de86b7b.jpg	長崎	581	あ	5740
+自家用(軽)/08c765d50c77a45abde0d308985829ce.jpg	佐世保	580	て	9330
+自家用(軽)/095902d7.png	佐世保	583	ち	.322
+自家用(軽)/0a27173dc82f187d087ccc88eacc1320.jpeg	佐賀	580	つ	2343
+自家用(軽)/0a98adcf209af4cae8d0e6886777a748.png	福山	480	え	5151
+自家用(軽)/0b7019c72397d00c12fd0f700a4ee219.png	佐世保	580	な	5733
+自家用(軽)/0bc3ee35ba88ca640ab5b4251b623291.png	佐世保	583	い	.893
+自家用(軽)/0d2603fdee2be4079e3e408a2b2f05ed.png	佐世保	580	な	5733
+自家用(軽)/0d59689a4739ac5ff2995c693fbf0fca.jpg	佐世保	580	て	6696
+自家用(軽)/0dce225b8dcd9bd17c9613917e6b1908.jpg	佐世保	583	に	1203
+自家用(軽)/0df431264cbb7f3eb578c21d833273c2.png	宮崎	580	ぬ	9956
+自家用(軽)/0e319e719498a28513f92def38149f8e.jpg	佐世保	580	な	2643
+自家用(軽)/0e9395fd0e82b6b7809d24da99e72835.jpg	大分	580	わ	4435
+自家用(軽)/0f7c8de98e62a9667c5795be7e3c4375.jpg	佐賀	580	ほ	6003
+自家用(軽)/11b1f5df084b3136134f4ced65637d22.png	佐賀	580	こ	5108
+自家用(軽)/11b6c714ad26cd2e932eda4e34af9120.png	福山	41	?	6088
+自家用(軽)/11cc421cd0dc8ee8ce36f10c64edd4a9.jpg	福山	480	さ	6176
+自家用(軽)/1285480e1ee7a9bc64642edb52b4362b.jpg	佐世保	580	と	8027
+自家用(軽)/12c006530a141acac0dc4188c5c9afcb.jpg	福山	480	さ	1631
+自家用(軽)/13d06b3c8981ea4134fc3a942834e549.jpg	佐世保	580	そ	2937
+自家用(軽)/1654fea29232529547f4746d1ab048b2.png	佐世保	480	え	3808
+自家用(軽)/16eae81ee7de9d4237ee66461f1cdc58.png	久留米	583	ま	..89
+自家用(軽)/1822b82bf59d3aa6d69e40c663f2f54c.jpg	福山	480	あ	4239
+自家用(軽)/1881f082078e5ec732de631cad52b26a.jpg	福山	480	く	4536
+自家用(軽)/1948c2cd0c4e0de00b996a8b0e1a8543.jpg	佐世保	480	き	6959
+自家用(軽)/1KaVZAbE67MBpF0nknxpQ97HI.png	佐世保	580	せ	1022
+自家用(軽)/1a1ba07469d56376ac29c7d5139a7976.jpg	?	?	?	5334
+自家用(軽)/1a51b527339b69aa1e7d247ad9898050.png	佐世保	580	こ	7864
+自家用(軽)/1c22444ca4fb0a905a2a5f80737dedaa.jpg	尾張小牧	580	ち	7077
+自家用(軽)/1fbd73ec0f33a06f1c0fe03b42082586.jpg	福山	480	さ	7622
+自家用(軽)/2147e8a1a1c07f12ba2c8754520a1791.jpg	福山	41	く	4053
+自家用(軽)/2155bf027d34d18caf78bc24022ef795.png	佐世保	580	ち	1918
+自家用(軽)/21f8a5ed9d3d1cc01e9990fedad7308d.jpg	福山	483	け	..72
+自家用(軽)/24121a23c02177bf33756028b1f3fa9a.jpeg	熊本	583	こ	7212
+自家用(軽)/254735915cd4eb0b642b9a28e8ba99f7.png	佐世保	580	あ	8583
+自家用(軽)/25daf30c7e964c101b00fe7dc2181ccd.png	佐世保	580	そ	5027
+自家用(軽)/263fd1bf.png	佐賀	580	と	3526
+自家用(軽)/26ceb868a1fef8cfffae95f046b221dc.png	品川	580	け	9159
+自家用(軽)/26d0d5f6253b13eedcbb2ecb4ac0a63d.png	世田谷	583	あ	4107
+自家用(軽)/2837189f9fd0811f1fe5ba264fde631d.png	佐世保	580	?	2170
+自家用(軽)/2856513040b9a4c487628726ce45dedf.png	佐世保	580	と	7899
+自家用(軽)/285d38e55cba8edae39135c8557354c1.png	長崎	581	え	.673
+自家用(軽)/296b93f9a4e09aefa4a0f2cd8afa6e2c.jpg	岐阜	580	ふ	7878
+自家用(軽)/299d3f5c19bff0ccb19a75da509d4bf3.png	福岡	580	?	3702
+自家用(軽)/29bc4d888dd3d646b7154ad2d0cbfdc3.jpg	長崎	581	く	5087
+自家用(軽)/29c81f81d9fe2162a0c455f6c1bc5773.jpg	佐世保	580	け	5927
+自家用(軽)/2a2243160e4c73ad517075f5586f156a.png	佐世保	580	か	5085
+自家用(軽)/2aef2984bdf78dab30ce1af81e87f3c7.png	?	581	く	5895
+自家用(軽)/2b2c53a70cd6c7fb91ef4733e53d00e6.jpg	福山	480	さ	8450
+自家用(軽)/2b7890f2e98712d708af1b9084962b92.jpg	福山	480	け	5705
+自家用(軽)/2b8771e913ffbef0134b82e3081c21db.jpg	佐世保	580	さ	4106
+自家用(軽)/2c5cd78181cf057fa778f54e05c5fc69.png	佐世保	480	か	6867
+自家用(軽)/2d05b1d90c994d9dc34e347707411da2.png	佐賀	580	せ	8517
+自家用(軽)/2d6730660cfc5ee2062575471ab68f70.jpg	福山	480	さ	7354
+自家用(軽)/2dc6404077d6a46b61ba5eac1a551340.jpg	福山	480	あ	7857
+自家用(軽)/2e3200991e6af9b9933162ad407b8335.jpeg	鈴鹿	483	う	3000
+自家用(軽)/2f0400868bdcb398a3259ccb46444d42.png	柏	580	こ	6858
+自家用(軽)/2ff1b3763df16856729aac3076246b71.png	佐世保	580	な	5733
+自家用(軽)/2h7dtknwhhv2ztfpy9ae.png	福山	484	の	.358
+自家用(軽)/31a79e78839ef8464e04ab4d9feac155.jpg	福山	480	か	8008
+自家用(軽)/31ac96a3814fe81ea3aa3503e17f0414.png	長崎	580	わ	2211
+自家用(軽)/34541eb5e92a7ec778324790ff3fa8e1.jpg	佐世保	580	そ	7693
+自家用(軽)/34bdd85bc6fd82cce4b51438d231be24.jpg	福山	480	あ	4239
+自家用(軽)/35e50472b0a7b594c72f31abd00eed1e.jpg	神戸	483	あ	.193
+自家用(軽)/361c321041d428c41c8f63786f213395.jpg	長崎	580	そ	3013
+自家用(軽)/36313628c390783bca736992ee978d8e.jpg	福山	480	え	1287
+自家用(軽)/37fd7eb1f2753ce9e6b19547dfd09240.png	佐世保	580	に	.737
+自家用(軽)/391a9c8e6dcc4685f6315afed775acce.png	佐世保	580	な	5733
+自家用(軽)/3987a112e957314824e1f8c1a4961d68.png	佐世保	580	そ	8625
+自家用(軽)/39q6wbajeehc794ns6vk.png	福山	480	こ	7268
+自家用(軽)/3a4dabd302b88fdeb153f63ba8da48dd.jpg	佐世保	580	て	4248
+自家用(軽)/3a98c1dc1aa508288fb6b94f9fd26d01.png	福山	480	け	5418
+自家用(軽)/3a9b0620fcd7b3df658a84a8b3be8075.jpg	?	?	?	9526
+自家用(軽)/3aa6a7adf4ffa406724804984b288919.png	福山	480	け	8688
+自家用(軽)/3b844021b49207aa67034ad1889f5aab.jpg	佐世保	580	そ	9312
+自家用(軽)/3c6eaa029f8b4e7786c1b211507c7b18.png	佐世保	580	さ	8575
+自家用(軽)/3d3bc3c926ed1328a87946b1beeb974d.png	福山	555	に	.660
+自家用(軽)/3dc371c76d356581e6a758c134a12b7e.png	佐世保	480	え	8704
+自家用(軽)/3e35a748fc763bf21ad21c6fc3d4d414.png	大宮	583	き	5138
+自家用(軽)/3e66a640558b985ea5be5250657d0168.jpg	佐世保	580	さ	6753
+自家用(軽)/3eb64dd8415b359cf4180c4f36987d35.jpg	福山	?	?	5151
+自家用(軽)/3f6a4f907c68eaf1f84b4158e2d5bb6c.png	静岡	581	か	7020
+自家用(軽)/3f801c8c9fb2737b1ca81e22c08c3ef3.jpg	佐世保	580	た	4098
+自家用(軽)/3fdac801d8ecf0d3b0a6d7c16f9b8a7c.png	長崎	583	い	1993
+自家用(軽)/3iwury3i8kcpvkezv95y.png	福山	480	け	8688
+自家用(軽)/40b6851418c3b23fd5500e7256924a97.png	佐賀	581	あ	6424
+自家用(軽)/40d8d4e8.png	佐世保	580	て	7953
+自家用(軽)/410b38a760daad3817385ea804a6dd31.jpg	福山	480	け	5418
+自家用(軽)/411be3460ffbdcdb3ebb72c2601e1197.png	佐世保	580	な	5733
+自家用(軽)/4157c428e680513bb87f7e9ae545ffab.jpg	福山	480	う	.754
+自家用(軽)/4228048ed1d2afc231b410fdff19661f.jpg	長崎	580	ね	4047
+自家用(軽)/428d2640282fa1d332dc1bc965a71212.jpg	福山	580	と	6151
+自家用(軽)/431a2c07a5e5801b148da9e457197209.png	長崎	580	ほ	2254
+自家用(軽)/433857a3f62b34e0f2c19877178dc128.jpg	福山	480	さ	1631
+自家用(軽)/44ab36e07ccd62d023934aa0ecfe8f4d.jpg	佐世保	580	?	3503
+自家用(軽)/4581242e889c2cfeeeaab7f08af61902.jpg	福山	480	こ	4556
+自家用(軽)/45baa878255bfa0a68e712f2b3e7872f.jpg	福山	480	け	5418
+自家用(軽)/46ca6e54a66adb20638911b8baa5800f.png	佐世保	50	た	6699
+自家用(軽)/46fc7466d9be31b8a97a3781d1528b2f.png	佐世保	580	さ	5395
+自家用(軽)/48002ec743b3669c9741fabed4235f22.jpg	佐世保	480	き	.940
+自家用(軽)/481be27f8faa706eec85339ca3bd3182.jpg	佐世保	580	か	6403
+自家用(軽)/48456dab2b9035c8c473f99f13a811fa.png	熊本	580	わ	3203
+自家用(軽)/49572492.png	宮崎	581	か	1335
+自家用(軽)/49deb3d3966eefaade173a82f185259d.jpg	長崎	580	さ	.380
+自家用(軽)/49e1b82c8029c4a6067cc1a51f922e4e.png	富士山	480	あ	5227
+自家用(軽)/4a1a923a47fa217ab4758f998818d5b0.png	福山	480	け	8688
+自家用(軽)/4a406cc00dd0e2e5cd1d94d3b3039e99.jpg	福山	50	ゆ	4778
+自家用(軽)/4aaac40f95f5f5bd89716e8d1aaebb89.jpg	佐世保	580	こ	7768
+自家用(軽)/4aff1d060a55105882b20b0a4754f1d9.jpeg	北九州	580	や	7941
+自家用(軽)/4b6ceb79.png	佐世保	580	え	8224
+自家用(軽)/4cXvQtEsyUuQa25DTrReIQqBa.png	長崎	580	に	6046
+自家用(軽)/4d3abba34554d5d7bd3ea70f45e6b256.png	長崎	583	ぬ	.915
+自家用(軽)/4db6cf9f04d7f8ae11c274f514c1be52.png	愛媛	480	き	3240
+自家用(軽)/4e5ba780b0bdd25c794ce941c911366b.png	福山	480	い	5551
+自家用(軽)/4e635224d2dcb09e30f2bf917a0a29ed.jpg	佐世保	580	と	2554
+自家用(軽)/4pxrfucxqrkduecg2q6f.png	福山	580	あ	7723
+自家用(軽)/50277fe6c225637f063da5999ba07747.png	福島	580	よ	9217
+自家用(軽)/50b28a254255c2e6934da173a29c94d6.png	福山	480	こ	8696
+自家用(軽)/526a06334761439f548a0f34cd5cc573.png	福山	480	あ	.927
+自家用(軽)/53998a26.png	佐世保	583	け	7000
+自家用(軽)/539ca17af482fea5f9d88eee684885d3.png	福山	480	け	5705
+自家用(軽)/54ea28e92e475cb61358b6cfc3c7ef80.png	熊本	583	え	2280
+自家用(軽)/5536e72f276a05a1d5f235b231631056.png	長崎	580	ひ	3225
+自家用(軽)/557cc2a8db682c9bbb18b8bbd8f2d581.png	長崎	583	ぬ	.915
+自家用(軽)/55d361df2b1f34143e0d1c194a9e7500.jpg	福山	480	え	1287
+自家用(軽)/560389ce.png	佐世保	580	?	9379
+自家用(軽)/5678b58cdf938e9433eaf4868b7b869a.jpg	福山	480	う	5875
+自家用(軽)/5704ae576f16ec7a99ea00c4228d95d4.jpg	佐世保	483	あ	7781
+自家用(軽)/5842676e5266ae3877aa4c56539047b3.jpg	長崎	581	か	9243
+自家用(軽)/592b4a88f2715c9288a1ff38d56db0ba.jpeg	佐賀	583	ぬ	...8
+自家用(軽)/5BR551zvX6YCEQrLzt9ypM3H5.png	佐世保	480	き	7409
+自家用(軽)/5a2d0295a496cb0e68e8d8a89ba5e48b.png	佐世保	580	え	7576
+自家用(軽)/5a48c4c810ea2c94e8c0bed8a6c04fdf.png	熊本	584	そ	1012
+自家用(軽)/5b841b24.png	佐世保	480	え	5421
+自家用(軽)/5cca8d909f020797cdb2dfcf53b99a5c.jpg	佐世保	580	え	.578
+自家用(軽)/5dd602f0e5dcee3f5af4adf5197dd1bf.png	福山	483	う	3710
+自家用(軽)/5df5498d06435bcf83d0ed99f2b2eb48.png	福山	41	き	8363
+自家用(軽)/5ee71a41c0e25dde1f89c54f6b1bc160.png	広島	584	つ	.421
+自家用(軽)/61c88bdc1e329d8436c826bc7d8eda1b.png	佐世保	583	に	1214
+自家用(軽)/61ca3f8424ebfc06dbd5bc6b80bc68a9.jpg	福山	480	こ	8696
+自家用(軽)/628d6b1c8b19b3d0bd2e8ec593185f3d.png	佐世保	580	た	4679
+自家用(軽)/62c49273aa31e54dc723575cec4ee4c4.png	金沢	580	そ	.163
+自家用(軽)/63357568ace1a866016acec0e78c465a.png	福山	480	こ	1701
+自家用(軽)/646c64e6736fcf8922ea045f4e85a961.jpg	佐世保	580	さ	6539
+自家用(軽)/64714b6c11e2c3bc829333c42f02d2e4.png	岐阜	581	ぬ	1184
+自家用(軽)/648236def06417db056214d88a2cfcf7.png	佐世保	580	わ	.685
+自家用(軽)/648b27361a740b418cbaad8fb3f5990e.jpg	福山	483	あ	6716
+自家用(軽)/651ba1bb2d166e7801b41903fc9f24d5.png	佐世保	580	け	9783
+自家用(軽)/654e20f9a98b1bee89b66e8cdf440df3.png	佐世保	580	す	1277
+自家用(軽)/66df1dbe.png	佐世保	580	ち	6676
+自家用(軽)/6770f42c12de36c19eea3a5dd27c9eb4.png	宮城	580	よ	4787
+自家用(軽)/679f31c6025a98605b9ea7c7732bec25.png	和泉	480	つ	.766
+自家用(軽)/6977957068ef3ab3bf26565c6ceb6e6e.png	富士山	580	は	7924
+自家用(軽)/69aae7d13a28cf8f341b30c1fdd76146.jpg	福山	480	あ	4239
+自家用(軽)/69facb23.png	佐世保	480	と	2525
+自家用(軽)/6cbbe1d50050c5bbd6df271ff534498e.jpg	佐世保	480	え	.162
+自家用(軽)/6d4b828bc3c8879ba30fe6d77aabdb46.jpg	佐世保	580	?	4098
+自家用(軽)/6d508a1497c4a512d575ab600e030225.png	福山	480	?	4756
+自家用(軽)/6da9b9961ebebf4988554cab59d2f8df.jpg	佐世保	580	き	.487
+自家用(軽)/6dfc3800b384f1793ff0bd2a03a50214.jpeg	長崎	580	め	4223
+自家用(軽)/6f10e3d3a3bc3d05e6672cfeeb85fa46.jpg	福山	480	こ	8643
+自家用(軽)/6f686c831f268ef3e2bc55151e4720a7.jpg	福山	480	け	4428
+自家用(軽)/7015ba3877fe3515744a92e7b606e23a.png	?	?	?	..97
+自家用(軽)/70547f58.png	長崎	580	め	4180
+自家用(軽)/72828e471c27722152c9138ea4e8059b.png	福山	480	こ	9854
+自家用(軽)/7381ba57bc1aaaf6fa1fb3fd8c76d06e.png	福山	480	え	9882
+自家用(軽)/738549098b546e5823b73553fc36d8f7.png	袖ヶ浦	580	の	7478
+自家用(軽)/73ab6f879716cdaf26f4077dea4dd3f8.jpg	佐世保	480	き	3347
+自家用(軽)/75a984261c9e28c6c5a5995a10ae6c4c.png	福山	50	つ	8046
+自家用(軽)/773b110d4cdc9bcc901aa8feb019ae2f.png	熊本	581	ぬ	5296
+自家用(軽)/7899d7cbf1c3c56fab0e2f67ccd6a945.jpg	福山	480	い	5551
+自家用(軽)/78vCdI9fEIZUOZQajHiSPcYje.png	佐世保	580	て	5075
+自家用(軽)/79d32d07e812f5b2a8a1f94c7b188a35.png	長崎	581	か	6402
+自家用(軽)/7a3de7e6f0fc6b71dbda603bf352b398.png	熊本	580	わ	3203
+自家用(軽)/7a7105faaa6e65a0d7de45fd8622ff4d.png	横浜	580	ゆ	7038
+自家用(軽)/7b707e37f49bc9d5ebfaa9e097abac85.jpeg	佐賀	41	く	3440
+自家用(軽)/7cae8bb2e941ba0c2b7c89de51428ede.png	佐賀	580	せ	8517
+自家用(軽)/7d8c1810e21a9d03d5ce6509a46e9360.png	長崎	581	え	1352
+自家用(軽)/7e01b14f0bf802f5d39e0cba5338751a.jpg	福山	480	い	8476
+自家用(軽)/7f5bcfde06825b297fb34d834d56a195.png	佐世保	580	な	5733
+自家用(軽)/7fefad6820aab6a85b8a5c9e33014868.png	福山	480	け	4159
+自家用(軽)/80cd7f2db46fdc008af75eb21c64f657.jpeg	佐賀	580	ぬ	4383
+自家用(軽)/844f705014a499107489e5ac2f34ac8d.png	福山	480	く	9245
+自家用(軽)/8633ab4dfeac2f6895d9268e3dcd4f07.jpg	長崎	581	き	6983
+自家用(軽)/86cb992ab992c572b2710621117560a6.jpeg	久留米	580	く	6337
+自家用(軽)/87613fc4bf5f685bb4c847ab1eaca272.jpg	佐世保	580	と	1979
+自家用(軽)/8776a6039212464c94e298e92ee56aaa.jpg	佐賀	580	も	9903
+自家用(軽)/87ec4f38e069cba6f97442c3b06f9793.jpg	福山	480	い	5551
+自家用(軽)/88a1619e1434e402c7724c61d8165b1c.png	佐世保	480	き	4033
+自家用(軽)/89ec11fb587f2f22927d3f3a87655f43.jpg	長崎	580	き	4178
+自家用(軽)/8PwWxRlkgc054kFg2URraJGf4.png	佐世保	580	す	.558
+自家用(軽)/8XuTwG5V38xoUamKZg4xo6bJu.png	佐世保	580	こ	1899
+自家用(軽)/8aef8bde14ee6745d0a86fcbe8585c60.png	福山	483	い	..36
+自家用(軽)/8b24372164b541f21a5cd280aaa7c6c9.jpg	福山	580	な	3853
+自家用(軽)/8cbd571a8d7ebdeaa6c90ce6401948c8.png	長崎	580	む	2614
+自家用(軽)/8ccd7b802a1a6e09b7ac60ef3e3d7b75.png	福山	480	こ	.918
+自家用(軽)/8d2c54ca7629b94ba77ebe5dd29408d3.jpeg	佐賀	580	ひ	3305
+自家用(軽)/8d65d70c2a4209388f2532b966c258c5.png	佐世保	580	か	5085
+自家用(軽)/8e9e537da7b187e3456571c15ccb2508.jpg	佐世保	583	あ	7515
+自家用(軽)/8fa31da270eac99fb0955439da7ef9f2.png	福山	480	さ	1631
+自家用(軽)/90eaad2765892d320267335d4f37da22.png	福岡	581	か	2576
+自家用(軽)/92476c4bd61c964df640bfd32d91aece.png	佐世保	580	た	.133
+自家用(軽)/92f56c7a5aedff89658124ed3161c761.jpg	福山	480	け	5705
+自家用(軽)/9366c7402074a52467550184e81e06ca.jpg	佐世保	580	つ	1775
+自家用(軽)/93d75f1ad80afe78ef50b988fb887978.jpg	佐世保	580	に	1480
+自家用(軽)/9432b4e295c5a607eee41a75e1554ef2.jpg	?	?	?	.185
+自家用(軽)/94a8da2e56c9ba626d88017b499f15ad.jpeg	佐賀	480	け	3326
+自家用(軽)/96998b04c32a2d5e11ea566d679727d0.jpg	福山	480	さ	7354
+自家用(軽)/96cb737a0d9f5cf91fa272630a3252ab.jpg	福山	480	こ	8321
+自家用(軽)/97ba5c12808801f5592abd7d60c052eb.jpg	福山	41	く	4053
+自家用(軽)/983dc05563fe9407436d0505f9263478.jpg	福山	480	け	4428
+自家用(軽)/987bba0efa7963f0058ba09e2c3941a6.jpg	佐世保	580	て	9869
+自家用(軽)/98fc6cf3bc0b98ed5dc5d4ab669a70e1.png	福山	480	か	8008
+自家用(軽)/9922f0af347b010a511e7f61974c8d20.jpeg	福山	480	こ	2724
+自家用(軽)/996149a9bd826a3f13af88318ed53939.png	大分	580	つ	1751
+自家用(軽)/9a1ed0ea8e751a05811b78fc4247e79e.png	福山	480	い	5433
+自家用(軽)/9a27a19271dcb381b608dcd308a15858.png	佐世保	583	う	2763
+自家用(軽)/9a5580a3d4f3fe490c151e6eb8228c3b.jpg	福山	480	?	4544
+自家用(軽)/9b103e362f6b286c9ee55eaf9b32db68.png	佐世保	580	な	5733
+自家用(軽)/9bac21cae55e6c6c1fac35818e1a8969.png	福山	580	な	3853
+自家用(軽)/9bce1f73c7f7a26b7677d4f4cbf6b1f3.png	佐世保	580	な	1013
+自家用(軽)/9bedcaab9aac4d6c444cbfbfa73ec388.png	北九州	584	ね	..23
+自家用(軽)/9c32fad33b574cd055a58e1b5b7cf51e.jpeg	佐賀	580	ま	5534
+自家用(軽)/9ccab33f7539cfbc2dffc4ea1cef7962.png	鹿児島	584	こ	.711
+自家用(軽)/9d2c96c06f4e3b8a27e7620fb8cf0054.jpg	長崎	581	え	1487
+自家用(軽)/9e903723bd5cac9e02c0a7e4876dfbbe.png	福山	41	く	4053
+自家用(軽)/9f1ef07efecaed6ac29ade2dc4acb4f0.jpg	福山	480	け	5418
+自家用(軽)/9f3920e2719ca778214fe5323719ab52.jpg	長崎	580	ま	6782
+自家用(軽)/9fcda8cf580eef1ed39e1f7b1d5bbf03.png	福山	480	け	..32
+自家用(軽)/DhA4DmCVMn1yBNjtEEsVT3drI.png	佐世保	580	て	3890
+自家用(軽)/E29SwK7IJFh30v1gqkQJvyjUn.png	佐世保	580	す	9302
+自家用(軽)/JyXdfVWdJXkZ43dV88PBQuwmP9GQdO38TRbq5PoY.png	佐世保	580	え	.578
+自家用(軽)/P8iGb33oz3tfppW85BTjJrkIQ.png	佐世保	580	と	4488
+自家用(軽)/PuOfp8iCMH943z7HEmjdIIbRycVsgr3wxw0OXSHs.png	佐世保	580	?	5493
+自家用(軽)/TzbwxuWV1UfiaxNLcyP4xfxsK.png	佐世保	480	き	6993
+自家用(軽)/Uqi81wKPDiuDOLr0FXPBQ5In9.png	佐世保	880	あ	.431
+自家用(軽)/Xmz34cR97qIQALFW9JJmqviwv.png	佐世保	580	に	3118
+自家用(軽)/Y3fbHN1Axca4gvZIjvSFU1bGD.png	佐世保	580	そ	8780
+自家用(軽)/YHrGcujHmL8I3QJN28GCRkQlMRoul2RKfnaoLj3y.png	佐世保	580	に	.897
+自家用(軽)/a21a6dff.png	佐世保	580	け	3322
+自家用(軽)/a26143f96353731bffa9830abfb44664.png	佐世保	580	け	7489
+自家用(軽)/a2861c6b.png	?	?	?	1115
+自家用(軽)/a2b38a8538121568774ac4b82721612c.png	長崎	580	な	8521
+自家用(軽)/a30d1406daf40c461c8c24fcb0b4219a.jpg	佐世保	580	け	3725
+自家用(軽)/a335d0f7dc02b4e350fcc0d93b3f461b.jpg	福山	480	こ	9854
+自家用(軽)/a3qj3zrsm2bvmvmhurqv.png	福山	480	う	.270
+自家用(軽)/a45879f5cca918f27d5d7f1d498b2a3a.png	和泉	480	つ	.766
+自家用(軽)/a4d41962203fe033950efcc52fd0cd55.jpg	?	?	?	.703
+自家用(軽)/a5c6ea45.png	佐賀	580	?	6148
+自家用(軽)/a6877371cd73c09f53ce702de192cddc.jpg	福山	480	さ	6176
+自家用(軽)/a68e1f796c29738c971a6c5e66f2d9a2.png	北九州	581	い	3386
+自家用(軽)/a85b5a1775c71d75ff4c5eddf8945947.jpg	佐世保	50	つ	9456
+自家用(軽)/a97030d851515bf2f743d362acf94d73.png	佐世保	480	え	8704
+自家用(軽)/a985abf0bec4f8253b200dc61a713ced.png	大宮	583	こ	.171
+自家用(軽)/a9c242f6c6ff6ec11f431a6966640be2.jpg	福山	480	け	5705
+自家用(軽)/aRG1r79rOoj9CXzI9JfryewvE.png	佐世保	583	あ	.517
+自家用(軽)/aa76ecdf.png	佐世保	580	わ	.701
+自家用(軽)/aa9b3081ae16eec9c9f68aeedeec4ee3.jpg	長崎	580	め	3078
+自家用(軽)/aacf60da8ce873f2c0d59d7c9f740a30.jpg	長崎	581	か	2280
+自家用(軽)/aae9e8a9aa908e38bf050c7c82f75b03.png	長崎	585	い	.373
+自家用(軽)/ab285d3577d137ee7ab252b08f67d4d9.jpg	佐世保	580	ち	1567
+自家用(軽)/abf271695b5fda69ee8043185499b489.jpeg	佐賀	580	の	6763
+自家用(軽)/ac17f750453be794ce0020881e9ca4b5.jpeg	長崎	581	く	5332
+自家用(軽)/accca884ffa84762fb6219c0238b9cc7.jpg	?	?	?	?
+自家用(軽)/ae4ca2a5c4d6cee4bfcea76aa4f7dc8b.png	佐世保	583	ち	.818
+自家用(軽)/ae696c7c507b96d0795e12b6f12d1c0a.jpg	佐世保	583	え	..79
+自家用(軽)/ae856a09a5151a3f26a585bf80e99a65.jpg	福山	483	い	..36
+自家用(軽)/ae94dfc904af19ea8064ff00956037fa.jpg	福山	41	き	1088
+自家用(軽)/aea037cc1469d0139a6bc7559c45bccb.jpg	福山	580	な	3853
+自家用(軽)/afb48caa77336268a84ee2b2da120a4e.png	京都	500	あ	4649
+自家用(軽)/aiebx6fp27wsysdmmftb.png	福山	480	さ	7354
+自家用(軽)/b07215a3c731e628c4e37b6e7ef68995.jpg	長崎	584	ち	1215
+自家用(軽)/b0a39f895bb895f30ab792124e1c6b0f.png	長崎	580	そ	2198
+自家用(軽)/b12b5d040ea645e36e5fd120d57ef9b3.png	福山	480	い	5551
+自家用(軽)/b1623ba8b6023270e40b2db5e8050147.jpg	北九州	480	く	6097
+自家用(軽)/b1892dbe303188e02ea799c668fc0064.png	佐世保	580	け	7489
+自家用(軽)/b19462cebdd881f2e0d5e8281feb1ebb.jpg	横浜	580	ゆ	7038
+自家用(軽)/b28a82490f59b67df46ce094e280bf74.jpg	長崎	581	え	3060
+自家用(軽)/b37583783142e126c9eaca7503f3eef9.png	福山	480	け	..32
+自家用(軽)/b40a9ea7232d96fa0a7ffa1d3d423f1e.jpg	福山	480	け	.296
+自家用(軽)/b533c2f6814aeedd52781d0414300f1e.png	福山	480	こ	9385
+自家用(軽)/b56af7a69a84505d142ed6ab4a56da98.png	福山	483	こ	.818
+自家用(軽)/b5c10f85aeeef6674878245e04f9afe0.jpg	福山	480	う	.469
+自家用(軽)/b6109d90fb42c64eaaa876118513e4b4.png	宮崎	580	ぬ	9956
+自家用(軽)/b655d504eaecc76cb786a016b215dfa4.png	つくば	583	ふ	7428
+自家用(軽)/b74b27ea0a5e22837243e0dbe99daa6d.jpg	富士山	599	ろ	3776
+自家用(軽)/b7927c962bce643d8a6c366e8da600ab.jpg	?	?	?	9203
+自家用(軽)/b91cd053333bb140889efeefbc0c9274.jpg	佐世保	580	な	7519
+自家用(軽)/ba69bb88df7ab4ed486f869d461b3f2f.jpg	福山	580	な	3853
+自家用(軽)/bc3807ee4ec7026828ce0f104a9102af.jpg	福山	480	こ	8321
+自家用(軽)/bc78dca29ac2e045b730ed0212f2d728.png	福山	480	い	8476
+自家用(軽)/bc82c5df729cf1aba4ae4de77746f3a7.png	福岡	580	わ	8250
+自家用(軽)/bd3b122c7ba25556a14ec5afc0765e82.png	長崎	580	ひ	3225
+自家用(軽)/bd7683327cf9b0f6977d4b72492262cf.jpg	佐世保	580	て	.915
+自家用(軽)/bdb249095d04a89e86b0c77fca74ebe6.jpg	福山	483	あ	1945
+自家用(軽)/be50a5217a152f98193057d9ebdecbc0.jpeg	福岡	581	く	1540
+自家用(軽)/be5ff56ae1e94b40af8fa0b2fdd76b84.png	佐世保	580	つ	1775
+自家用(軽)/be98ac48f4219316c10cef94f2abbd0d.png	浜松	580	む	7804
+自家用(軽)/bef649cad87771faf6f94bc13bd7e73d.png	福山	480	こ	4556
+自家用(軽)/bffaa8f5.png	佐世保	580	て	8123
+自家用(軽)/bsrdtezrkm8hmrc9ikq6.png	福山	480	こ	8697
+自家用(軽)/c0d356956a2597be35bec9d745ee5451.jpg	佐世保	580	た	1910
+自家用(軽)/c0d71e3bbec5fcc620e8cb8ffdea7a29.png	佐世保	580	?	4476
+自家用(軽)/c142e9fd103cf87006a6bdb02f3eff06.png	佐世保	583	に	..14
+自家用(軽)/c205a236dc54fcf90647ff26eeef9d21.png	福山	483	く	.703
+自家用(軽)/c38d4sbr6a4562iztzmt.png	福山	480	く	4536
+自家用(軽)/c50a346854ff0eda8814328cf4d57f8c.png	福山	480	う	3428
+自家用(軽)/c6601df4.png	福山	480	い	5281
+自家用(軽)/c671f6b2ab506550a3abea2c3dd20ff1.jpg	佐世保	480	か	1028
+自家用(軽)/c6c879d8cd98b47cf83b7edabf08a60d.jpg	佐世保	580	と	2554
+自家用(軽)/c6ee00f5340047f3488f5fd47ba77a30.jpg	佐世保	580	て	9869
+自家用(軽)/c9321098febd6d226563addb32edf677.jpg	福山	480	か	8008
+自家用(軽)/ca56447f27afa681f1dd71768bf8802d.png	豊橋	580	む	7504
+自家用(軽)/ca7f009a6728d0aa761342d98f24d492.jpeg	筑豊	580	わ	.946
+自家用(軽)/cd0b2737.png	佐世保	480	か	9268
+自家用(軽)/cd3365db4c970eec1a22350c7a55bf95.png	佐世保	583	み	1020
+自家用(軽)/cd79654858c25cb9480b4f985c948172.jpg	佐世保	580	す	.558
+自家用(軽)/ce06232b9823ed2e83bab5b5ca5b44c3.jpg	福山	480	こ	8643
+自家用(軽)/cec608e163a1d3a1fbbe0014f77f3ce1.png	佐世保	580	な	5733
+自家用(軽)/d027968dc1fc83f07d05448d73dc2189.jpeg	久留米	580	え	6726
+自家用(軽)/d0ecb500273d7903a677759c07cac788.jpg	福山	480	さ	5508
+自家用(軽)/d274449395c4a4f0bbf59e1109dac3c1.png	福山	480	こ	5603
+自家用(軽)/d349af9699864a35eab829c944e4871f.png	佐世保	580	け	5299
+自家用(軽)/d38c276a561f13ca13eae07733f740a0.png	福山	41	く	4053
+自家用(軽)/d39088eeb1f8a80728adadb904174ab1.png	熊本	583	せ	7700
+自家用(軽)/d66ad561f7f5c5a4f7337ac9b12518e8.jpg	福山	480	こ	8643
+自家用(軽)/d72c82f355f785fb6089bd2dbb491288.png	福山	584	て	1003
+自家用(軽)/d74b990fe8101b8e52a8532483af3fed.jpg	佐世保	580	て	6696
+自家用(軽)/d821bb5a828e28fbcb53fcf78988e981.jpg	佐世保	580	そ	7798
+自家用(軽)/d889450c00070dfcce6a464d71084acd.jpg	福山	483	う	..29
+自家用(軽)/d8e1205739335805e67f777bff0cf15f.png	佐世保	580	な	5733
+自家用(軽)/d9a312c40a05b39b861654d579fe64a9.jpg	長崎	583	ほ	1035
+自家用(軽)/dGvnunyvuqal5Mj3jbvIblu8V.png	佐世保	580	て	9869
+自家用(軽)/dLAr02xfh5CfusnDpXyE0dtZI.png	佐世保	580	と	..37
+自家用(軽)/da9bf045df0506f7ce6e9d4cd6074958.png	福山	483	う	..29
+自家用(軽)/db16e19608627007717b65d986fc3ce2.jpeg	広島	581	こ	4286
+自家用(軽)/db2c75543273e5cfce2399c5439d7aef.png	福山	480	さ	7354
+自家用(軽)/dbcfb310.png	宮崎	581	か	1335
+自家用(軽)/dd4390a24cbfde2e8b54270c3fc86bca.jpg	長崎	581	き	.938
+自家用(軽)/dd75e642901a6c972e8e7bfd398b2204.jpg	長崎	581	き	.820
+自家用(軽)/ddc306dd859b90a636b7dda27763d77f.png	佐世保	580	な	1013
+自家用(軽)/de7df403e44497fcd879c38ebaba7205.png	佐世保	580	?	9351
+自家用(軽)/ded4ceef0ed247d2a4cc3fecb53e0f0a.png	長崎	581	え	.673
+自家用(軽)/e057ce246fb87060679d7b03fec1247b.jpg	福山	480	う	5533
+自家用(軽)/e06d115711b5122bc3c92c17bf416d3c.png	佐世保	580	ち	9359
+自家用(軽)/e0a13d1f7710f712f44dff7b99507028.png	熊本	580	わ	3701
+自家用(軽)/e0c1fe66f5d5af489ff9fd06be96f31b.png	筑豊	580	に	9539
+自家用(軽)/e196a11221b7a905b83f46c09fdb9a90.jpg	福山	480	こ	.918
+自家用(軽)/e25ca52c6f36073f3284ddad95faf855.png	佐世保	580	な	5733
+自家用(軽)/e30b8ee714bc6cb6e134b7ef8a70c94d.jpg	佐世保	480	う	.390
+自家用(軽)/e31721199f96b454b1bb62e429387db2.png	練馬	580	そ	7710
+自家用(軽)/e31a100fbaf69d7b8cc372dd44fa796c.jpeg	佐賀	580	た	9415
+自家用(軽)/e39bbd2ba4d5a7b96321cf52af62a0ed.jpg	佐世保	580	て	2646
+自家用(軽)/e464c3b9a4fc65745033ac762dca26db.png	福山	480	あ	4239
+自家用(軽)/e4f3ba9c155ee267d49a8cc4046f65c5.jpg	佐世保	582	ゆ	...8
+自家用(軽)/e5cb5889e9c141af489a0c5c7b20c6ba.jpg	佐世保	580	さ	.644
+自家用(軽)/e5d76b95498d109f578e7c0841ab11ac.png	熊本	583	え	2280
+自家用(軽)/e6590728c193bd0b1073bb0cc711800b.jpeg	熊本	580	か	2687
+自家用(軽)/e6e48156b4b75356e6b5f5e166eb3a1e.png	福山	41	く	4053
+自家用(軽)/e7011210178269d3d2ac21ae66dcc0a8.jpg	佐世保	480	え	1963
+自家用(軽)/e701573977205b9a008f55ca13c589e1.png	佐世保	480	?	6875
+自家用(軽)/e75fc2bec8c022940089b5872919b6a9.jpg	長崎	583	ぬ	.165
+自家用(軽)/e82f16cfe4921bb4ab5eaa80950cf3e1.png	春日部	585	の	1216
+自家用(軽)/e872c13218991003385cd5bad6da9e43.jpg	福山	480	?	3643
+自家用(軽)/e8bf326d3b9689d1f93f43454a244889.jpg	佐賀	480	え	7189
+自家用(軽)/e9c8fb6e846a6d1e426ea2385a297f98.png	?	581	?	9235
+自家用(軽)/eUY0eQjl832KfmCW2ZUlB7LAL.png	佐世保	580	け	7432
+自家用(軽)/ea2069440a9f82812a7b00d459a8415e.png	福山	480	あ	4239
+自家用(軽)/ea2c9179888a3fa13a8668c77b897efa.jpg	佐世保	580	と	2147
+自家用(軽)/ea420612cc5f833212e638768f82e2dd.jpg	長崎	581	う	9466
+自家用(軽)/ebbf902b288ae99ec01e83485254fc09.png	福山	480	う	.270
+自家用(軽)/ecf0de97bed8f7bbb8ff656e99147a14.jpg	福山	480	け	4428
+自家用(軽)/eeb9244c0b8b716992a1d6d58758d10b.png	長崎	580	わ	2764
+自家用(軽)/efe698e4.png	佐世保	583	つ	.216
+自家用(軽)/eyhd7427qmunxrjah7i2.png	福山	480	く	4536
+自家用(軽)/f0133298.png	佐世保	583	け	.801
+自家用(軽)/f176e62edc74500a32709f8a54af62ae.png	長崎	580	む	2614
+自家用(軽)/f1bed23088ab77609c8ab7e105d07b5e.jpg	佐世保	483	あ	3338
+自家用(軽)/f1e29aa8e7a808ac50e5b6f78b5a842d.png	神戸	51	に	5643
+自家用(軽)/f2dcdd38.png	長崎	580	み	1594
+自家用(軽)/f2eacda6d9f43b0fe0e1f73e406185a9.png	福山	50	ゆ	4269
+自家用(軽)/f2f12a47aa835083631e03d65c544253.jpg	福山	480	か	8450
+自家用(軽)/f349049e9b4ae7ee9013cbe4dcf67491.png	鹿児島	584	こ	.711
+自家用(軽)/f485bb8e7e7f40e18939a0a433d7e545.png	長崎	583	い	1993
+自家用(軽)/f56338f3f09c8b776274b6d0f318768f.jpg	福山	580	な	2983
+自家用(軽)/f5fff92722932b821f705b9c39e65b1f.jpeg	佐賀	50	ゆ	3971
+自家用(軽)/f61466bb.png	?	50	?	2067
+自家用(軽)/f6iOQV6V8VGXtYKS04HzSZ9cn.png	佐世保	480	き	.185
+自家用(軽)/f812cfc4ddb66cb69305d84504ce3f9b.png	長崎	581	え	5900
+自家用(軽)/f92fff4b26969d8d13644742febb4691.png	佐世保	580	な	5733
+自家用(軽)/fa81cbde303b85e1adc79e7212d139ce.png	福山	480	こ	8321
+自家用(軽)/fa8fa24eecf5b60270e948ce61b3be05.jpg	佐世保	580	せ	6492
+自家用(軽)/fb0f9bcbd530a7d3e5429e145cc184e2.png	佐世保	580	わ	.685
+自家用(軽)/fc3374f9cce3372d6d19cd3efa965afb.png	佐世保	580	け	5299
+自家用(軽)/fc380d8cfd3c55e5e1f7c4360755c7b2.png	佐世保	50	た	6699
+自家用(軽)/fc9e934ac5e2d81bf1668a5ba0c77ed0.jpg	長崎	580	ち	4096
+自家用(軽)/fda25ea499620f59fb50515d733fc89c.png	福山	480	こ	1701
+自家用(軽)/fe7e728563bac7234da61ffe29b04dc1.jpg	長崎	581	か	7821
+自家用(軽)/fedf91b32ca69e9aac21243595f3d4b6.png	長崎	580	そ	2198
+自家用(軽)/ghd6ryxszyp32dt3mvwj.png	福山	480	け	.296
+自家用(軽)/h7bx9cuvdwemdu386nq9.png	福山	480	か	3643
+自家用(軽)/iCA779KU4oNKHd3UXbTVkxbgX.png	佐世保	580	く	7517
+自家用(軽)/ifVi5q5nx19K3PjsZDa7c2vF8.png	佐世保	480	あ	4748
+自家用(軽)/ikcevuuqahrpdwtdjzig.png	福山	480	あ	4239
+自家用(軽)/lZiSWGKIqw8AredhWLHmUGf0R.png	佐世保	480	き	3347
+自家用(軽)/lbdAyv186IibzBP3h6QGTqiZk.png	佐世保	580	さ	6753
+自家用(軽)/mbuxjuyih2nn6bu7geg9.png	福山	480	あ	4239
+自家用(軽)/qqdTfhjhbCNbvYqcExE0cLkFU.png	佐世保	580	て	5075
+自家用(軽)/qtpuyg3zzf3eicg3bkb4.png	福山	483	え	8020
+自家用(軽)/sQQcDMEFxN5ubt9NZvSlwnEPIvv3I2N29ZpR84Cp.png	佐世保	580	い	5681
+自家用(軽)/t826jmg2r3u98mwszh7w.png	福山	480	か	8450
+自家用(軽)/uHyHEw3e0vKfCPrV82bwZ5Z2PDLJUrsdA0p2joWx.png	佐世保	483	か	1205
+自家用(軽)/vdunxgv6ni9gttqcsbkx.png	福山	480	け	5418
+自家用(軽)/xev5Q2ZrsCHPEiPELq1JIlRJW.png	佐世保	580	つ	9801
+自家用(軽)/xoRlOPEIJoy2v3H9Nok7hU6B9.png	佐世保	580	と	7044
+自家用/いわき/1e51e308ee64b6eca6ab05efc0a8c3b3.png		500	ま	9217
+自家用/つくば/3ab56193de405e1506de4ac38cae0050.png		300	つ	3264
+自家用/なにわ/3c8182b4e59e23272be9a596787c858f.png		338	ね	6688
+自家用/なにわ/531a860270c5b83ffb4f92171a310cf7.png		?	?	?
+自家用/なにわ/985ef7d8c761f4c31c87b05e78d3bb0a.png		400	ひ	.375
+自家用/なにわ/a9b63d369df8a1c365474ce2f2da3a23.png		100	す	..58
+自家用/三重/35f3c9f2bd6985458ab5889494000d50.png		301	ふ	.739
+自家用/三重/4633a79db287307920cf5adc41b26560.png		502	む	7473
+自家用/下関/5a475007f2373d3263728c2e06bb6fbd.jpeg		500	す	4536
+自家用/下関/ab96bfb8a1dd8130d1c1c0a06a462158.png		330	そ	.404
+自家用/下関/d92543975069765fe277e684ec4fd0ad.jpeg		500	す	4536
+自家用/久留米/0235defd5ab7cd4721974c29b06dad29.png		501	そ	8014
+自家用/久留米/04917adfb1658aaad1df846a977f4ecb.jpeg		341	ち	1122
+自家用/久留米/0bd31d6729eaf756ce4489e555c2264c.jpeg		531	そ	1955
+自家用/久留米/1364f511d098a5eaf5dd3b47df839369.png		300	わ	1919
+自家用/久留米/1dae00bd.png		501	?	3543
+自家用/久留米/2dcaff2733654ac186bdf2ba5df10472.png		338	た	..13
+自家用/久留米/3d73a604ddf941aaf99a9365abdaffe3.png		300	み	1615
+自家用/久留米/4e23bf3a8c14b4d5c4678aa74ed0f46e.jpeg		332	ろ	1226
+自家用/久留米/5c29f7e2b8d2afab8f2707e0d719413b.png		332	ね	.119
+自家用/久留米/7b22f2d3e62db22b25ab2e3773a585ca.jpeg		330	ね	1220
+自家用/久留米/82eee795.png		300	?	6885
+自家用/久留米/86d561d4c461916ae0c6527211d4cba2.jpg		536	ま	1125
+自家用/久留米/8769ff7f34d9b46e4f5dc5b7d1dd9047.jpeg		300	も	7730
+自家用/久留米/89d7bb118d753b2521a45f9d8a813faa.jpeg		332	ぬ	.918
+自家用/久留米/9addbff323d8ada58fafbad7ac28cf2e.jpeg		501	つ	5336
+自家用/久留米/ae68ce4751c2f9140949a43fd636a3c7.png		500	わ	4100
+自家用/久留米/b91a1ec9127536a705425027516c6327.jpeg		597	く	2525
+自家用/久留米/dd36e5e26bcc1d72f7a8473d95448703.jpeg		300	わ	1553
+自家用/久留米/dedf284a86455104da0b83033e7e57ea.jpeg		500	わ	5698
+自家用/久留米/e1db0dcc8fbf907eb9e511a870f4533d.jpeg		330	た	7016
+自家用/久留米/eec2089bd73cf9f992cf13682f14bb21.png		?	?	?
+自家用/京都/1a27400883fede28f7a836384eb7809f.png		535	と	1000
+自家用/京都/3ea909c3de81bb6d2b456ee030b0c9db.png		800	?	5589
+自家用/京都/bb21310258026b52b790551cec2d4b17.png		533	ほ	1248
+自家用/京都/da27286c1e334f6ccb75ff43eba89e21.png		533	ほ	1248
+自家用/仙台/67fdad1c80a5695bf511dcef4886b0f1.png		500	ゆ	1207
+自家用/佐世保/01c98af89f4bdc5c81edca797faf863c.png		500	ね	6256
+自家用/佐世保/01d070fd78d0583e2bbe53f14940c5a0.png		530	や	.528
+自家用/佐世保/01f2e1b189c4b92551c0a8c8785f34e1.png		300	ち	6524
+自家用/佐世保/039a7226fb2c73210088b53573f1e6da.png		332	そ	.325
+自家用/佐世保/08aa0860.png		300	と	2215
+自家用/佐世保/09bd17315c827b551767ba927adfbaf4.png		530	ら	8118
+自家用/佐世保/09f2ebe67ba599a304956c18cdae5b8e.jpg		300	Y	2479
+自家用/佐世保/0a1f69293693e4e14ce2c7de761d43b2.png		330	た	1703
+自家用/佐世保/0d437833105082b001aed744b2c08681.png		500	な	9686
+自家用/佐世保/0de0e8c834c1fdf3221a01e6f3125aeb.png		530	も	.221
+自家用/佐世保/0e5acc5481bfa7ed6108650ba26d8b09.png		500	ね	5231
+自家用/佐世保/1657423541fc974352d274ca1611707c.jpg		500	て	5926
+自家用/佐世保/174ef6db5350806a483e07e838437ebe.jpg		500	た	8798
+自家用/佐世保/18a9f3f3.png		330	さ	1536
+自家用/佐世保/1b75f094.png		?	?	8648
+自家用/佐世保/1ba86b70.png		300	と	1668
+自家用/佐世保/1bc2a5673edd09aef21e74cfe4b1284b.jpg		500	ぬ	7052
+自家用/佐世保/1c12af81.png		530	?	.830
+自家用/佐世保/1f0e62c1a1843da8107e2797dc2d075a.jpg		800	さ	4355
+自家用/佐世保/21655b8f21a0eba4f71d0822bbe9064a.jpg		330	ひ	..89
+自家用/佐世保/239d9af15c3789dd6cdde01d62808b2c.jpg		?	ほ	1016
+自家用/佐世保/2705bae716105693607065d2cecd2308.png		331	?	1129
+自家用/佐世保/29c9fec5.png		100	さ	3224
+自家用/佐世保/2da5bb5f5e7eb52d7f327de972d6061c.png		300	つ	3323
+自家用/佐世保/2f1eff940336365a5b1747467b1ed84a.jpg		530	そ	2916
+自家用/佐世保/31b1e6d34c9b022b9ee480b43e779f7c.jpg		800	さ	2704
+自家用/佐世保/31f710df7052b32595bc4538e6154ba7.jpg		?	?	1414
+自家用/佐世保/325a02e5b5a99dd48f4f2ae9dfe0ea94.jpg		300	た	5445
+自家用/佐世保/33466878011927ad76533960e8472ddf.jpg		330	は	.918
+自家用/佐世保/35e7b4d17addce26c352acd3dd4ad347.jpg		530	そ	2916
+自家用/佐世保/372ff338167321de44f1f01510306638.png		300	た	5445
+自家用/佐世保/386e6369225f83016fa9e824baeadde6.jpg		500	た	9744
+自家用/佐世保/39cf39f419d21efc95791e06717ee49b.jpg		500	ぬ	5106
+自家用/佐世保/39d54a8b.png		580	つ	7714
+自家用/佐世保/3bd2587880e5ce304eecfcc5bd365585.jpg		330	ぬ	5577
+自家用/佐世保/3d10d789.png		500	?	4226
+自家用/佐世保/4005745cb132fa579f3bc833408cc141.png		530	す	1604
+自家用/佐世保/422848c3aa9c432a72798b6ae4d712c7.jpg		300	つ	9264
+自家用/佐世保/42e81648.png		300	と	2215
+自家用/佐世保/455f3335a6669b6d395249191ff47051.jpg		331	わ	.117
+自家用/佐世保/462553ec.png		504	ら	...8
+自家用/佐世保/47af66d7.png		?	?	4298
+自家用/佐世保/49a38fd2f739c5f3c02192043864e598.png		300	た	5656
+自家用/佐世保/49aa7f29632d5ca6d9b158873913dd81.jpg		500	な	9343
+自家用/佐世保/49ad438e55f35cf58106a751103fb9ce.jpg		300	て	6773
+自家用/佐世保/4d6366ef.png		300	?	5867
+自家用/佐世保/4e6a24a3234479e014a0f3e0b10cf3e6.png		530	そ	1327
+自家用/佐世保/514c5fbe788c353a21f1c7afef0966e0.png		500	ぬ	8535
+自家用/佐世保/53e37dd8f323448e124c30b9f2436596.png		583	は	1357
+自家用/佐世保/54364daed6445854cdcbf98eac2059cf.jpg		300	て	7089
+自家用/佐世保/55547747.png		332	た	..55
+自家用/佐世保/577ed7404e054598b0ff74ae6f6f7212.jpg		530	の	1278
+自家用/佐世保/5ZPfV8kxozzWD5CBaFHkp2hAS.png		800	さ	4118
+自家用/佐世保/5c8cf05eb2363fbc8e39597b29bbc20b.png		300	た	2993
+自家用/佐世保/5d71ba71.png		500	に	4181
+自家用/佐世保/5dea5739d2f166c090ae450cb096a412.jpg		537	ら	2525
+自家用/佐世保/5f5sEr2MkxYbYlLUl0R7alkUg.png		530	そ	3012
+自家用/佐世保/5fdd11fb2b470645a8a4c80c0ed7e495.png		300	た	6913
+自家用/佐世保/5sAOMCDD9m4am4cGO9i53Os5Q.png		?	?	5352
+自家用/佐世保/647da837212b395d91515b702724b44c.png		500	な	9686
+自家用/佐世保/6659c95eb09edf269febc7bb6f7f8c16.png		300	つ	3323
+自家用/佐世保/69492d2e5f36d8a2cbce61ad038ba362.jpg		530	む	8778
+自家用/佐世保/6a25c5ee15c95c0accb684230b3f098c.jpg		500	Y	5387
+自家用/佐世保/6a4bea529b8e427a8cc8542de02777da.png		500	ね	2884
+自家用/佐世保/6a9881595fa0802d8150c445825265d1.png		330	ぬ	.763
+自家用/佐世保/6xop9USJhnKAshQuJ8eIMBFiB.png		330	?	2014
+自家用/佐世保/718ebf725af5ecc03d93a7ebedefdaee.png		300	た	2993
+自家用/佐世保/75a2aceb02cacb1f65e6ccdad2125c35.png		500	ね	1755
+自家用/佐世保/761a154b.png		300	と	2215
+自家用/佐世保/764d9d1b8fe64d93035cf7ad6da6bb28.png		500	て	1432
+自家用/佐世保/768d7d5fd6c0b5af3fbac21d8843dbf1.png		330	た	.340
+自家用/佐世保/77aeb6377472e270b4bbd89db7b7a2cb.png		530	ら	8118
+自家用/佐世保/7X3jsrpFRlhpygGOa5esEnAS0.png		330	す	2826
+自家用/佐世保/7b646906c89bca3a4efae09f2b40934a.png		300	つ	5465
+自家用/佐世保/804a9c55ffbc85f1cc20a0cb883c4f42.png		530	も	.221
+自家用/佐世保/8054db80b82e0519bcd8a117742be3d0.jpg		500	な	7398
+自家用/佐世保/85b5c8fa6a4fb9c00edb117fee27a124.png		330	さ	5455
+自家用/佐世保/85e447d0c72aac1e9a9e9e50508d5116.jpg		500	と	9718
+自家用/佐世保/869dcde367acc27f32bd89c00df27427.jpeg		500	の	.729
+自家用/佐世保/879953a101ae0cc0a9727806a568aff3.png		500	に	2906
+自家用/佐世保/895b300dec161e4d6a1fe3b1b2155a82.png		500	ね	7130
+自家用/佐世保/8d0ab0ff934b69a5cf34167d002c2a47.jpg		800	さ	2705
+自家用/佐世保/8f29265fe429bad97443a79a88bd4fc0.png		330	さ	5455
+自家用/佐世保/8fd2527d8651f624e87d05edf0ee6fbd.jpg		331	り	.710
+自家用/佐世保/8wF6faAkpIyzovVbtbdTWCdly.png		300	て	6773
+自家用/佐世保/90d43115dd75c2f443c4716bf40eb3fa.jpg		330	つ	.335
+自家用/佐世保/91ab574d01e9b5c9560c399f4d1b1db4.jpg		330	す	.355
+自家用/佐世保/9244d191.png		330	?	4859
+自家用/佐世保/93c35da4.png		100	?	3208
+自家用/佐世保/95210d30313cc17a5455f6eb43c9248e.png		500	の	.729
+自家用/佐世保/9dbeca318e8dfe47c3fac4cd961e88f2.jpg		530	ち	7757
+自家用/佐世保/9e76c79d66b013f405688d6cf64f0eba.jpg		300	と	1109
+自家用/佐世保/9ecb6ecac0660c364529610885272b3f.jpeg		331	り	.710
+自家用/佐世保/9fMpvu73QqRwOcbysl5AsKktL.png		300	て	3840
+自家用/佐世保/9fc36d1dfe56468ba67b7b84ffc2c977.png		300	た	6913
+自家用/佐世保/9fce5cd1cc7abb95187d624cd8477e70.png		500	な	6924
+自家用/佐世保/9pBbCD038W883lE2w4pZNhde3.png		584	を	..24
+自家用/佐世保/E5T3SRoBDbCfxi7UfAP2LfGrw.png		500	ね	8385
+自家用/佐世保/EcUxlf7DF7TPvLRJCqDwpXrRW.png		300	つ	6065
+自家用/佐世保/FULyZfstM9K7URg50chS6HXAb.png		330	ち	1151
+自家用/佐世保/HIJF0VAPN5jAEJpQTFVianl9V.png		530	せ	1706
+自家用/佐世保/ITVy1HBTUzfEl1mQ5mjN9V5a6.png		500	た	7161
+自家用/佐世保/KF2HcOizrPKlPJhl2NWkyVYk6.png		330	さ	7043
+自家用/佐世保/LI6Dbiz2pNhFfWRBHC2AmiAbC.png		400	す	3519
+自家用/佐世保/LMW9nf4A0hW8C86ibfEcNKNoG.png		500	ね	.373
+自家用/佐世保/NnyRleOyJG2fG0ppkB3WM3Fdk.png		530	ぬ	.927
+自家用/佐世保/OitlHlpHtmQPhUwLBru6l1z43UpByuzOu5Iqssmy.png		500	つ	2889
+自家用/佐世保/QcipdwQEgmrC3JM75LG4nHKaC.png		300	す	.944
+自家用/佐世保/R0GkgG8QIiuLmk0RXcHLLQF3E.png		500	ね	8766
+自家用/佐世保/SAwWbwnjVgPXUfFTZkZcSHo5e.png		300	た	5909
+自家用/佐世保/UCjCxz1kwyKOLf2LQ6GVzjjp8.png		500	ね	4881
+自家用/佐世保/UEU2c6HztfwJEbmU4DcQ8LVat.png		500	ね	9201
+自家用/佐世保/VR4yEpiEKn6iYp4hghQP4q9UJ.png		800	さ	4118
+自家用/佐世保/XXG7wsUrCuCo7XgR8BzZ7bp9o.png		500	ぬ	6857
+自家用/佐世保/ZFBDqjFHtp9fkE3Y58H2N8ofn.png		531	す	8118
+自家用/佐世保/Zn0pfNJS2CWKcEoQ9dr6HnAvBsS9fuigrCtGMQHi.png		200	さ	.384
+自家用/佐世保/a01c9e1d62bd247347f3b69b5e42bb02.jpg		500	に	7848
+自家用/佐世保/a4c232425e3dfc50dcf579f973841265.jpeg		500	ね	7446
+自家用/佐世保/a5a67b060ee8ab1d3414dae1f6fa0489.jpg		530	は	8877
+自家用/佐世保/a8931e1d6d3e12549611399709af6d11.jpg		300	て	8243
+自家用/佐世保/a9a660b366b8681d7aff9e8dcfa12150.png		500	ね	3593
+自家用/佐世保/ab5d69c612694a3497bb2d971e62cf87.png		530	や	.528
+自家用/佐世保/aba393be6b23963b6194fc0e7be75124.jpg		584	と	..15
+自家用/佐世保/axVrt737cC6.png		530	ほ	.811
+自家用/佐世保/b3014f26.png		530	?	.430
+自家用/佐世保/b3568f1a3f8aa1c1787ad5cbe881686c.png		530	そ	1327
+自家用/佐世保/b49dd817f58e573ff4544a28ce77f138.png		300	と	.383
+自家用/佐世保/b5fbfbb9576808e955e9d4a46293d132.jpg		230	す	..88
+自家用/佐世保/b6b0e12c73582949b2cef9e3d342fb16.jpg		200	さ	.636
+自家用/佐世保/b84ca3d1.png		330	つ	8639
+自家用/佐世保/b95378a3.png		500	ぬ	4139
+自家用/佐世保/b9e922eed67325f633e291344c120c71.png		500	ね	3593
+自家用/佐世保/bdad5d09e75e941d65e1008d8ca33465.png		330	ぬ	.763
+自家用/佐世保/bfdfdd02e5a647c2d54eeafea7c38fab.jpg		?	ね	4881
+自家用/佐世保/c39b5836ad43b3ac096ba04510fa4878.png		530	ぬ	.193
+自家用/佐世保/c51c8826e64ff36c2a1002c34486d3f0.jpg		?	?	.636
+自家用/佐世保/c5ef2f0a38608b7e7f47f540c4c05175.jpg		330	せ	.158
+自家用/佐世保/c60db09d5240b7a6e0c33fc706445668.jpg		500	ぬ	6984
+自家用/佐世保/c74e6cb0d0393e264ca63644eda93d58.jpg		300	つ	3239
+自家用/佐世保/c78dff19.png		300	ち	3145
+自家用/佐世保/c87ae705a88307c000e6c8a07ea82e29.png		500	ね	2884
+自家用/佐世保/c96902efb6a882c76131213f61b6e85f.jpg		500	つ	7233
+自家用/佐世保/c97e178c451962d0a9863e4e61ece60d.png		500	ね	5128
+自家用/佐世保/c9c71fccb1721fa7988862f6352a7ac9.jpg		500	と	5280
+自家用/佐世保/ca9423713609fd0b5cd1b6623df073ad.jpg		500	ぬ	4285
+自家用/佐世保/cprYPPIfin6INkZ9aQyLTUxloHhIwTrSD1VVY6kT.png		500	て	3215
+自家用/佐世保/d1ea8496ba607d0298300e7122840292.jpg		530	さ	4123
+自家用/佐世保/d21c5edddedc795848ab88949bf29280.png		500	ね	8385
+自家用/佐世保/d7078b970f7cfad1bd610ca6bb3e7fbd.png		500	な	6924
+自家用/佐世保/e03c945e5e82c04d4467a56bcd9eb993.jpg		584	と	..15
+自家用/佐世保/e1f558dc.png		530	?	1229
+自家用/佐世保/e2aa43e6e636bb4ee2545283ebeeb952.jpeg		55	つ	8881
+自家用/佐世保/e6f6767218698d9e9417ccfce6f5ec4d.jpg		330	?	.776
+自家用/佐世保/e763719a015c7fb9e067bdb6c41d3137.jpg		530	ほ	8778
+自家用/佐世保/e8a017b744038eabfa86e518a193a8c0.png		?	?	2310
+自家用/佐世保/e8f8105b17438abe8be40d92fafaeb82.jpg		584	か	1107
+自家用/佐世保/ea57f9831844242a49a3ff78779dbd60.jpg		330	さ	.862
+自家用/佐世保/eb310efd.png		500	ぬ	5319
+自家用/佐世保/eba5e927ae800efc3c2ee07c50df18a5.png		?	?	1355
+自家用/佐世保/ebef6b4d.png		300	つ	4475
+自家用/佐世保/ee165b742fd6566526a8aa0a08554854.png		300	と	.912
+自家用/佐世保/etWWyrm3M1P0SKsj1xVcvOD7z.png		330	す	2826
+自家用/佐世保/f2dcbff6ee1201619f891ac274f52706.png		500	ね	6973
+自家用/佐世保/f3b8c500.png		300	て	1726
+自家用/佐世保/f3df3941fcf53160e0aca37e5e5ee7a8.jpg		33	せ	5352
+自家用/佐世保/f71fbf3c9611354a4abfe690fe098e19.jpg		330	な	.926
+自家用/佐世保/f821c1a5d3d46aac06d1165ab3db912f.png		300	て	5368
+自家用/佐世保/f97abaecf26cb16ec171828b89cff8f0.jpg		330	さ	3312
+自家用/佐世保/fa9ea431ac4cc48aab0baeb32e67f218.png		531	?	1110
+自家用/佐世保/fb97f9238d6fe14abd77af80eee8e639.jpg		500	に	8314
+自家用/佐世保/fcaf538f.png		?	?	1188
+自家用/佐世保/fcc1675218bb94985af935428ec9eed5.png		300	つ	1635
+自家用/佐世保/flOMYs32Xmd7S86xJA2cpPIWw.png		200	さ	..93
+自家用/佐世保/gNN50d2x2adedd1F9I0JwFXOZ.png		800	さ	4355
+自家用/佐世保/h6ClU8xHPc141ENdvYKy2p9WuzvMNx2rSSv2FcCm.png		530	も	.714
+自家用/佐世保/hbCJUf6Y9VUQhEzopEwqKJYng.png		330	す	2826
+自家用/佐世保/nkfAHckdwO3ZY1M5y5sodixdZ.png		530	も	.714
+自家用/佐世保/xQHdmNlGORc5KmmU3TSFs2l1C.png		300	そ	3031
+自家用/佐世保/yklemtoqgYZ9emtFuRHQzmnW2.png		500	に	4203
+自家用/佐世保/zpsy4d4pBGC1gh8D3G6AX4j9v.png		500	に	6982
+自家用/佐賀/0afefd7a9e180b01e8b909c68388dbc9.jpeg		300	ふ	3613
+自家用/佐賀/0de3404514afb533edf4f2e382023392.jpeg		330	の	2507
+自家用/佐賀/0e7ceaef32658b0362993089d1bf1d32.jpeg		330	や	2233
+自家用/佐賀/0f726d7a610a52c34ca3b2021d37eba8.jpg		331	つ	1025
+自家用/佐賀/1304f56cb5bdf4e8e68b970db544fc5e.jpeg		530	つ	1969
+自家用/佐賀/2960e6ef26f9c3c3df6342de6958a10f.jpeg		530	と	.426
+自家用/佐賀/2cdc26e31018766e0c3ad9e23ae93c61.png		300	む	6934
+自家用/佐賀/3eb5a1934f4579ac2cca79d9751c1fde.png		300	ぬ	5090
+自家用/佐賀/432d33a45b0a3a0ae88e8aa70a06cdef.jpeg		501	ち	7590
+自家用/佐賀/4b423d09797640f94f49ab7630f902b7.jpeg		330	す	3854
+自家用/佐賀/4f2848891a4390e3a6cc1cfd7297766d.jpeg		501	せ	4822
+自家用/佐賀/5163a175b37dac50f6cc233e6833b5af.jpeg		331	や	1881
+自家用/佐賀/579e96698738ec68bbff8ad0834018b7.jpeg		532	ほ	1116
+自家用/佐賀/5893ad20.png		330	?	7720
+自家用/佐賀/5e9685b051c3131c65e0ae61ea0dd39b.jpeg		501	た	2276
+自家用/佐賀/637d3d9b548a8bdcfc2e804668effeb2.png		500	つ	8424
+自家用/佐賀/65820510.png		530	ら	.411
+自家用/佐賀/6787c6e042c45360b6cf878c4819056b.jpeg		501	す	4387
+自家用/佐賀/7d1f4ce25054d756d4ddc618a52421c6.png		501	す	8814
+自家用/佐賀/80a88c7e21102e6eccd19f5084ed49e0.png		501	て	.594
+自家用/佐賀/83969ffdd7e492a094dcf58e89fdc3b4.png		300	み	2595
+自家用/佐賀/8b86a677.png		500	わ	4714
+自家用/佐賀/984ec0c7b4f73a07887bb241fbe1364e.png		300	み	2595
+自家用/佐賀/XIkKL3wgQgRJgBrOkTrpgLhfc.png		501	た	3881
+自家用/佐賀/a22e5c2b139b05713a908e85e98b7078.jpeg		430	な	...4
+自家用/佐賀/a94e952e3bc14b3f8337fa0c44e40696.jpg		530	せ	3965
+自家用/佐賀/aada4508a9857461f24ee4e8985ea123.jpeg		300	す	7109
+自家用/佐賀/ab1e30cd3112feae285dd78636ca2328.jpeg		57	も	6370
+自家用/佐賀/b27ea0d7ab4cbc2519caee8011908d51.png		500	つ	4566
+自家用/佐賀/b3f3f41312c9a99e25de9d446b2188ab.jpeg		506	る	5678
+自家用/佐賀/b4204f64ab1a1abd1e28f4d457235365.jpg		501	そ	2792
+自家用/佐賀/d9178af309f85ad8ea07a7578b939e99.jpeg		300	は	5245
+自家用/佐賀/da9cb1ee60492dbe2e47db2b2752efe0.jpg		501	て	2337
+自家用/佐賀/dd9409b4d1144f684e2e32c47b7396be.png		501	す	8814
+自家用/佐賀/e88c8f8264d592fbf160ccf492ab3773.jpeg		332	な	.107
+自家用/佐賀/ee6f0722ef0181851ed16bab743a0729.jpeg		330	ふ	2327
+自家用/佐賀/fc35988578de6b751f85eda54cea90f7.png		?	?	.820
+自家用/八戸/0799e2f7a971dd74e0fedf42812a2833.jpeg		306	ら	1000
+自家用/北九州/13ffd71f47d3c662b24df753650ebdd0.jpg		501	ふ	8781
+自家用/北九州/3c08aa7b36b9fcdc7b85c2922b09b08a.png		501	わ	2184
+自家用/北九州/41c02eacdcf7586852eb195b0de4013f.png		500	ゆ	.711
+自家用/北九州/54787fa3751ff0da5527cb1b957b7dce.jpeg		500	ひ	5981
+自家用/北九州/55b4c5fd479c9130976135373c94e09a.png		330	ち	4511
+自家用/北九州/56f734112b305266625b27334cea1267.png		530	や	2218
+自家用/北九州/6237537e830b87c9b38c46fc198c5336.png		501	わ	2151
+自家用/北九州/75a62f693d46ff8ba23ee0d000e9c832.png		331	る	2527
+自家用/北九州/783b242165d27e7857700695457b3f79.png		331	る	2527
+自家用/北九州/8f3d29b568fddc5db55d95e127e53079.png		300	む	7583
+自家用/北九州/97c1444a17c2e071c088c77d54020c48.jpeg		300	み	1290
+自家用/北九州/b371b415fb6513cdfbc9cba4f4192544.jpeg		501	わ	2188
+自家用/北九州/c1f3c767aa7d4293e2d538ef1397011f.png		352	る	..18
+自家用/北九州/c45b1409b0b9c61bb63a77b3ca9e0568.png		501	わ	1348
+自家用/北九州/c72d52c729ea0ca7aed975eb74c2c154.png		368	す	1122
+自家用/北九州/c87566fa2e5654faaf5f11b047b9229c.png		501	わ	1185
+自家用/北九州/cc6cd1e8dfe09783c5dc6fd204e56017.png		351	は	2525
+自家用/北九州/fc4d4d677f10f925e13d4b035e2080b5.png		333	に	.415
+自家用/千葉/759793798368508311aa43eb3c51c670.png		330	と	6163
+自家用/名古屋/0e0092dd63e5d9548f2b14b69c600cfe.jpg		530	ろ	3600
+自家用/名古屋/32bea4bb158cdc22cadc4fa32e76406b.png		504	わ	1925
+自家用/名古屋/4813b054818fd82e324be5e88e13a014.jpg		347	と	8118
+自家用/名古屋/4dc1ab7386462aa038d244c22a59dc43.png		531	に	2711
+自家用/名古屋/57183e532785c0db9000ba8a5073c2de.jpg		337	も	2323
+自家用/名古屋/5aa400fde2cb4b593167fc340e6075f6.jpg		504	は	7557
+自家用/名古屋/7880945298da548c81d1abdd6651cedc.png		305	る	.684
+自家用/名古屋/7fa8d2f4e4b19a4b665f9379f0161ab8.png		350	そ	.720
+自家用/名古屋/97fdc849f8b835cab58877582a9f2691.jpg		301	さ	.618
+自家用/名古屋/98b8c606550d3cb930a0d6e7e7ff0239.png		352	ゆ	.505
+自家用/名古屋/ad94c80d69661dec3bc9c520b8d08ae5.jpg		39A	さ	4249
+自家用/名古屋/b4b15875d98a07d480eac5290aea270e.jpg		346	ち	1221
+自家用/名古屋/bc7ccfab7ff11b1287ea9d489517f58d.png		331	や	3627
+自家用/名古屋/cff351f850e8ba32ef1b5b9742427d06.png		505	ち	4598
+自家用/名古屋/f9da828e8540b402584a1f493d4754f8.png		332	て	4488
+自家用/名古屋/fb8eb4dade459c49913ce165181b9bcb.png		303	ね	6606
+自家用/名古屋/ff7ee74fe121ad88e95856d2c89e01fa.png		?	?	1546
+自家用/和歌山/81c083faa02dcfe340549c0b9b831dd4.png		33	に	3986
+自家用/和歌山/d3c34d7e919bfe006d29bc131736f995.png		530	ち	1388
+自家用/和泉/c68af2dfd5fb8f9b2d9fce450e0f4953.png		301	の	8201
+自家用/和泉/f11c4f68d4c06f013f04d4cfa06dd533.png		301	す	7388
+自家用/品川/4965e17929c47fa1e5acab0797c60e12.png		330	?	2583
+自家用/品川/7263b4dfaa3a28d18c4408da25371d0d.png		350	る	1000
+自家用/品川/a58f1e11f34fa13236b7531216963c88.png		130	さ	1242
+自家用/品川/a9ed904c48af22559267489fd06a6137.jpeg		333	ち	..23
+自家用/品川/b27b4dce49e3dc91825b0de4a21131f1.png		301	ふ	2222
+自家用/品川/c903c9cf43beafbeac01b2a56354270c.png		800	せ	8733
+自家用/土浦/d45f534273d63d8b919c99bb85e9ffbe.png		33	る	1722
+自家用/堺/d38ffcfde25e23b330d16354b5b33785.jpeg		500	さ	9155
+自家用/多摩/0271fb657055e59eaeedc5424b7be0e1.png		800	そ	.230
+自家用/多摩/6f66b3a15caff8d8874c2f218146fc32.png		500	さ	4649
+自家用/多摩/77184885f66a51ceab486fd27a7cf679.png		530	に	7618
+自家用/多摩/fa58b6a7fd2027040f0b90a12942026a.png		372	は	...6
+自家用/多摩/pWOYyW5UzfBZkzzm2dEHY5baz.png		302	ほ	2690
+自家用/大分/259a927ed67103a0163bff308ba799c6.png		330	た	1866
+自家用/大分/4dc27bb77af2863c9a5aeb5a3703f02f.png		501	ぬ	2140
+自家用/大分/550236f7650267413c7878c066d941d0.jpeg	長崎	500	わ	8923
+自家用/大分/60067cee967e65c085a7f39c54e40d42.png		331	す	8020
+自家用/大分/6fa9174839a861c42996434b8f462d8a.jpeg		500	も	3819
+自家用/大分/80eda783.png		?	?	1099
+自家用/大分/85448cd7270264f7e92b6080def618b6.png		300	め	2165
+自家用/大分/8cadfa6394bbce3dd62bbfd0e8256696.png		501	ぬ	2140
+自家用/大分/996d7732302dbf02ef2a07970f118be6.jpeg	長崎	33	せ	9533
+自家用/大分/a75b2d089f6cc6809756d5893045da60.jpg		?	は	1099
+自家用/大分/ad1034128e49da486b7e1ea4c4cf4714.png		536	ほ	1208
+自家用/大分/b297eaca8461080e06c0820a2103ff74.png		330	?	3260
+自家用/大分/dcd0fe21e0e3295b4f0b075b6be7195f.jpg		500	ち	2668
+自家用/大分/e74bb62b0f8e060594741caf007b1a57.png		300	も	1146
+自家用/大分/ec45e44605bd04c1c90041cabbdbe3e1.png		501	わ	3777
+自家用/大宮/5c24984729541137f37ef75be5588b0b.png		53	な	6029
+自家用/大宮/e850663024cf3f3e4e241d6d9d9f79c3.jpeg		530	と	6850
+自家用/大宮/ec29819c6789bb4ee77a1429fe25dca6.png		332	ま	.309
+自家用/大阪/5149a7051c97d0c9a0ecbd694488a68b.png		536	て	1109
+自家用/大阪/87a3037e80b0b26ca838b7392737be21.png		300	ぬ	7045
+自家用/大阪/af87d2ff9e7ca55119f21fca31588653.png		400	た	7207
+自家用/大阪/b0cc1349da2b7d590eaad0a1a63ffb60.png		536	て	1109
+自家用/奈良/9dc78d9cd40b90a3db9c6dab5de4dac5.png		300	に	9629
+自家用/奈良/be4df3ab179c87cb10a53f68be0d8f6d.png		800	さ	4079
+自家用/奈良/fb62ad2d9d599331e5931852dc37863d.png		800	さ	4079
+自家用/姫路/ba7f7f485d3e698ee6ba606909b8b3de.jpg		501	そ	.309
+自家用/宇都宮/454d0de4f7c0a7d35ddfc6017955329e.png		338	は	1203
+自家用/宇都宮/b80efbc3c38de01325364cbf38fa5b78.jpg		830	ら	.110
+自家用/宮崎/068eab6f15deb7aad44b7957476a7519.png		331	ま	5858
+自家用/宮崎/11be11ab850b3c8cd92376737c16b571.png		530	ち	9119
+自家用/宮崎/9446fd49e9b919191784c659a292c8ea.png		44	や	.570
+自家用/宮崎/aab0fafdbc125980db36f58fbaea62c2.png		501	わ	.524
+自家用/宮崎/b43af0e81748e2ca99459ea049ac2d39.png		300	ふ	5644
+自家用/宮崎/d831fe32c9a7fe5f9d35c9b02c12dad8.png		530	た	8907
+自家用/宮崎/e79b3f7b26a73965b11c2cc436b7eb6a.png		501	わ	.494
+自家用/宮崎/ef793f871de8c6265d3a6f2a56d6eb0f.png		300	ほ	6017
+自家用/宮崎/efdda43bbe0acb391a309637bad4c39b.png		501	わ	1052
+自家用/宮崎/fa50a1b137ce5f8bd48ed24f8711f87c.png		530	ち	9119
+自家用/富士山/19b878431c0940aa5ff68cd7ebb61837.jpg		599	さ	3776
+自家用/尾張小牧/5383fa96597a1927d293fc828fcda6e4.png		503	ち	4314
+自家用/尾張小牧/c0e15fd9cfd21498dab50aea94d206f1.png		503	ち	9911
+自家用/山口/5c98f2668afb61e0a2ecaf9a7a22e7ad.jpeg		331	そ	1972
+自家用/山口/607b6e20751a1859262ae1338eda0d2d.jpeg		54	ら	9012
+自家用/山口/ab6f6da09b08c6bc3458bd167694f9f4.png		301	?	2763
+自家用/山口/b7e1a16a4ee7389c5d57f3174a960dc8.png		301	そ	.492
+自家用/山口/bc49aeb0a928dcebca2830b37078a0dc.png		581	さ	3307
+自家用/山口/d0128fd7e0c01d6c502b1c1d5a1a819b.png		501	ね	5346
+自家用/山梨/3464023cbaa45ab3e74e69da1d4bce85.png		200	わ	..58
+自家用/山梨/4675fe14f5e3d9f0624b3d62f2e7266e.png		332	や	.217
+自家用/岡山/194222b2b560c4acc28902014bd89bed.jpg		400	と	4897
+自家用/岡山/eadae48adbb1bbd6485b06556e1b95ff.jpg		530	い	2020
+自家用/島根/9dc74d0335029593b841ca1664d55356.jpg		300	ひ	3079
+自家用/川崎/a148aac734732274cda765bbe13a7adb.jpeg		500	め	1802
+自家用/広島/0Elm32tG3OQ0KlzNRaayEMZdcSODSIXjmHMk2vVf.png		502	と	1577
+自家用/広島/0a15a9a54dcd57f3e9f06ad1a38db43f.jpeg		330	め	1321
+自家用/広島/0d88db45ab98a1fa9a7ad9f415a3768b.jpg		57	?	4093
+自家用/広島/1c1cfae684a2dd0d18a23251083a8990.png		?	?	9208
+自家用/広島/c6d645c051a179afa143d98057d79172.png		336	や	.787
+自家用/広島/e179ad1f08f31589a16363fafc7fffdd.png		301	や	3922
+自家用/広島/f899e8d0d55e5a7100161d8cecea6ab7.png		502	に	1586
+自家用/広島/fa3ffaf3e583f1dbf6edf502713879a4.jpg		400	に	1589
+自家用/愛媛/1d7f50ab128095bcce86016dce739271.jpg		501	せ	2540
+自家用/愛媛/20ee766ca958aeb8fdb013f8b8a68e46.jpeg		331	ち	1417
+自家用/愛媛/64ff441e85caa260e0fdb774b21e6057.png		530	そ	3666
+自家用/春日部/975043fb9ce9bd49f0959352a554a4d9.png		44	さ	9663
+自家用/春日部/b8e8e036f973c24bce04a241186e065a.png		800	す	5817
+自家用/横浜/314878a14840c63eb665676c77c9df4a.png		300	Y	1814
+自家用/横浜/5ed8c5ce46ddc8e8e7cebaf79ffa3a4b.png		396	は	...9
+自家用/横浜/afca42b3a8828b1878df12e7c8c3b0b9.jpg		33N	は	.131
+自家用/横浜/b1adc96071a8ed2c376d04c88e9cfc30.png		335	た	.805
+自家用/横浜/b808f0827cc124e7cf128791a85450af.png		584	た	1155
+自家用/横浜/dac67f40ff074eb1db5fd84bb09a7323.png		77	や	6246
+自家用/横浜/ea59029b6d986ae897db16c1cc343de1.png		302	ち	4993
+自家用/横浜/f0c3eb19cf3fb1f78171864523ec20fc.png		337	に	.314
+自家用/水戸/62e82a3482cfb3ee1982fd869a8b8418.png		502	せ	9297
+自家用/水戸/b8e9228133bf0bcec8a3dd63c98cf6eb.jpeg		301	み	1086
+自家用/水戸/da4e213fe6ea34a7381821f4edefd1e7.jpg		330	は	.755
+自家用/沖縄/48e2e36b7ea219ae5b929d07b9512230.jpg		530	さ	8690
+自家用/沖縄/a361a82b4b21272c7a69442fea4c32d0.png		300	ま	8912
+自家用/沼津/714d2ea63642ad289b97bdb28e77eded.png		100	さ	6351
+自家用/湘南/2f1631c972e034dd3e95f65d20a16a83.png		301	ち	.403
+自家用/湘南/3974cd82f4be62fc9cef08528432f688.png		336	さ	.753
+自家用/滋賀/42e7279682481aa93606c700492cec78.jpeg		830	さ	1951
+自家用/熊本/02660eb04b2e7c6f366c8c6503b9e104.png		501	わ	9030
+自家用/熊本/0693ab8cc859adbc1955304b7434b6df.png		501	ま	9202
+自家用/熊本/167516be7c9b7c2fe7a8e88bcc2b92e9.png		349	め	..10
+自家用/熊本/21e552d165f9cffc881c7176b44ed463.jpg		432	は	.358
+自家用/熊本/3a88c9dbedbfaf4a3ac0c54bc0bd006b.png		501	わ	9094
+自家用/熊本/3f1a2ea9ceca487655ba9dc8cd33c03d.png		501	わ	6921
+自家用/熊本/4a6d1f72ae19dc92b2fd8ce7c4475fd2.png		502	な	.573
+自家用/熊本/5fdba72c3fce500de4ad3b34cc3474a5.jpeg		301	つ	1614
+自家用/熊本/60f711aeadf06a1623ecca2eaecfe5bb.jpeg		301	さ	7478
+自家用/熊本/70a84bc5d963ecb4a21c9de4ab35d3ab.png		339	せ	5588
+自家用/熊本/831f16ec.png		?	?	1003
+自家用/熊本/988bfc203c26048d5103f871aa874c92.png		?	わ	5732
+自家用/熊本/b22a7ee5d238da7e0d837779b3c445b5.png		336	り	1818
+自家用/熊本/b7b5b6557211e90fb9896fe0bac36f1d.jpeg		340	め	1120
+自家用/熊本/bd700f132f4f3b6ccadc32846c4edf2f.png		339	せ	5588
+自家用/熊本/c4b682bc24063d4e4804b79616d02017.png		330	は	1326
+自家用/熊本/c974b69ee99aa91a121c9d378267e8b0.png		530	り	3121
+自家用/熊本/cb6589acdeb7fcb8b7f0563dfaa973e8.png		501	わ	9877
+自家用/熊本/d1b8483022e340f8b0df397b9b9907bc.png		501	ま	9202
+自家用/熊本/daa7737939a5687f6668e3b41fcd9316.jpg		530	り	3121
+自家用/熊本/ed8a9a076f46b158d0bb569ef65d94bc.png		338	め	.111
+自家用/熊本/f13c6b9bf3b794650abe404ed8aeb9bf.png		501	も	6118
+自家用/熊谷/67b5868fe76747b07707881f74788839.png		33	な	3401
+自家用/相模/16bffaacc4ef32e6ea5908d69978292f.jpg		334	む	.246
+自家用/相模/d9b88c9525e5424223a16354b0452fa1.png		349	も	..88
+自家用/相模/e970165cee7485d02b738df0a1da3277.png		45	の	6848
+自家用/石川/2d768e244ba6f14789bfbf2321b82c7a.png		501	は	.641
+自家用/神戸/4f313cc5b7504bef4a0269ab4979868d.png		34	す	3243
+自家用/神戸/5289d46694e33d1ad4aa84ac8986bf49.png		302	の	1102
+自家用/神戸/8923bf18ae3c9e3df4c08aebef645bd2.png		533	ほ	.177
+自家用/福井/06b0267c6d87de236a952533d0c7debd.png		531	つ	1725
+自家用/福山/0238282dc14ff373900fc45d35947cdd.png		400	そ	7094
+自家用/福山/04733738fd26ae611e03651a108b4fe4.jpg		100	さ	4038
+自家用/福山/06adbd35dac776672d39c16d8bdf65c3.jpg		400	た	.906
+自家用/福山/06d98c091654cec0a5bb11132fafcad7.png		400	た	1718
+自家用/福山/125a6e0637bf8ac3d2638582b7a471ec.png		400	?	8182
+自家用/福山/163190be0f73b750da80a51721e49826.jpg		500	?	2003
+自家用/福山/193444253523b1de21a7c5a038a4c72b.jpg		400	た	1718
+自家用/福山/2142154e97a7ca7151df231fc575b657.png		44	ほ	6456
+自家用/福山/32d4e2bb46e89b0bcbb1b433f1bc0345.png		100	さ	2505
+自家用/福山/3c8e3afd38cf60feacd6d4ddb68b8fde.jpg		100	す	2127
+自家用/福山/3etr59qqhiuccv66nwer.png		480	け	5802
+自家用/福山/42bd9984eeff3bf7be44b29a80036262.png		?	?	1130
+自家用/福山/48bdf8198121b19854345184b9dc0126.png		400	た	1718
+自家用/福山/499a2fdd6a7b15678c16c842429ee411.png		100	す	2127
+自家用/福山/4be9de76968264058efe35889918c46e.jpg		400	た	.906
+自家用/福山/4d833be524d6858936a2a4c6f2f6d818.png		100	さ	9135
+自家用/福山/4e30036fd48afcbf8f9e94a8f009122b.png		400	そ	7781
+自家用/福山/66dfb67889963bf2b8a359b29a8a6544.png		400	そ	8182
+自家用/福山/7f216cf6e0fc6af088c6bf092eec398e.png		332	ふ	.328
+自家用/福山/953ec13944f1b59db24a862207f73e45.jpg		400	た	1718
+自家用/福山/986a7038e414b3a61a112fc724d06a47.jpg		100	さ	8074
+自家用/福山/989d066ff9bbea149278d9fcf088d02c.png		100	は	1877
+自家用/福山/9af7246a58c65b4da26c68776edad7c9.png		330	も	2980
+自家用/福山/a5af0363b406667b549265070db180ae.jpg		44	ほ	6456
+自家用/福山/a789f8a862aafe2e33b83c90bc2915ed.jpg		400	そ	8437
+自家用/福山/abb806fee545ee2fa1ef69bd3ccef493.jpg		400	た	1718
+自家用/福山/b0e6d7107f7e27c0ae7cc27bf223a0e6.jpg		44	ほ	6456
+自家用/福山/b111968e5601f5dda2ce5bc4a7e6a042.jpg		400	た	1718
+自家用/福山/b3108a469f39921c53bb4d4fb8ac1028.png		400	そ	8393
+自家用/福山/b5530994b4f579a7683398b535694cc1.jpg		400	た	.906
+自家用/福山/b7e2c025699cec6845575e72e8fd1cb8.jpg		400	そ	.577
+自家用/福山/b9a1589901f8fdaf7a58f8d724730596.jpeg		599	さ	2046
+自家用/福山/bbe4b60ad3f90f15f73910d46d66fce4.jpg		400	す	8473
+自家用/福山/c2a4156d2fe2f5798fe85127efcf7a49.png		400	た	2359
+自家用/福山/c40e360ff44a3f71048c66adc6d1edbb.jpg		100	さ	9135
+自家用/福山/c59ce57c00181e931a7c2761003cecc4.jpeg		130	い	.292
+自家用/福山/c6d90ef92d7f557958e25155d10a7edd.jpg		400	た	1785
+自家用/福山/d0ef9ce7771b4e784252013cf857be4e.jpg		400	た	2359
+自家用/福山/d59cf31feb7f07da2751d26feb385cb1.png		800	す	.383
+自家用/福山/d880cf08552ac8d032b2aeed8f39fe51.png		430	?	9999
+自家用/福山/d881e5c3e7aae2e7f6fd0b5803f58453.jpg		400	そ	7831
+自家用/福山/ddca9a11a790fcfafe0b833897c0e128.jpg		400	そ	1101
+自家用/福山/e19af1862a78178755db7065882cabde.jpg		500	?	2003
+自家用/福山/e62f40f1a5b972dddd01877421e24bda.jpg		430	さ	3384
+自家用/福山/ea22da4da7efb528a3ee0a829cfd7d98.png		400	そ	3763
+自家用/福山/eprku4xvfbn2yfkf97kp.png		400	す	2190
+自家用/福山/f0769d325257490ac67495d1da33ca05.png		400	た	3559
+自家用/福山/f4990cc68f14ff53778340bf5090927c.jpg		430	さ	3384
+自家用/福山/f59b85c2ad8a24511da4e96195bfbde3.jpg		400	そ	8182
+自家用/福山/f66bd828d26b93164264a8721868e7da.jpg		400	そ	8182
+自家用/福山/f9323f4e84b8c96eb56922fa54cbb62b.jpg		100	は	2536
+自家用/福山/fd09fb709ddc37a2edd5309d644c81ae.png		400	そ	6328
+自家用/福山/futae4gxvjidaws2ia2q.png		400	た	1718
+自家用/福山/h9x9tvx5jya3295byecn.png		400	そ	9162
+自家用/福山/i7cckethxprw9irmxe22.png		400	そ	4913
+自家用/福山/jhdhhpfwid3p2sx44i9m.png		100	さ	9135
+自家用/福山/jkfv9ibhqp26uzqqmcff.png		400	そ	.288
+自家用/福山/vf99q8kjf6e8szd6thfk.png		400	そ	9462
+自家用/福山/vfbsyzek7jenys2x8ckf.png		400	せ	4329
+自家用/福山/vr5g7y92xqfd27fbwza8.png		100	す	2127
+自家用/福山/vvh88xuiw588sabuhj56.png		100	さ	4038
+自家用/福山/wri4p3qen5ztejmnjxhk.png		100	さ	9135
+自家用/福山/yengivepw7h69t952ny7.png		300	ふ	1889
+自家用/福山/z53bpiks5agg2pusd69x.png		430	さ	3384
+自家用/福山/zpszmssp9iu4v3ss82tv.png		100	さ	2505
+自家用/福岡/020e082fba8755675c0c48a650500163.png		504	わ	6363
+自家用/福岡/0695becd8e779ea7ea71f5fe3ed77b81.jpeg		532	る	..50
+自家用/福岡/09fbc7129f5fa38a6e188f10b19f7ada.png		584	ほ	7070
+自家用/福岡/0a2a152c8b76b6e7b4c48b8ee98858a1.png		504	わ	1547
+自家用/福岡/108e5db177862bcc84ddbe8bef68e1ad.png		504	わ	4097
+自家用/福岡/11cc5f9464f7ee773710226760ebc850.jpeg		330	と	6719
+自家用/福岡/12934204f6c5783f5a72c6baae894bf2.png		504	わ	.366
+自家用/福岡/12f21f2269ae7f3ad66a332633849c60.png		503	わ	1802
+自家用/福岡/1518ece3896900116bb6f06e7721573e.jpeg		100	わ	5282
+自家用/福岡/1b3733af01448d1dc95198ff516f1853.jpeg		340	つ	1213
+自家用/福岡/1da720a983ace9b2e046c1f65c942dfb.png		503	わ	8768
+自家用/福岡/1fd4369d25d17560ab55e271266f5cbf.png		530	わ	1306
+自家用/福岡/24ebec8e54fdc9b463ba13cc925cc978.png		504	わ	4019
+自家用/福岡/259eb37ebf5a62ca25017a96320bbb20.png		300	わ	9711
+自家用/福岡/27844abbcb980d294d3adcca0ab781a2.png		504	わ	3905
+自家用/福岡/294b48c742a7e4da9dd4d0216bf0c0f2.jpeg		301	わ	.906
+自家用/福岡/2a1d046516fdb8d92dff274fcca0233c.png		503	め	2313
+自家用/福岡/2b29243ee503f938af5fedb16a5319eb.jpeg		302	ま	4907
+自家用/福岡/2d35e61882a43c18835e1194ab768926.png		530	ろ	1952
+自家用/福岡/313280ece6741c74c2dcdcc08a0f92dc.png		530	ろ	1952
+自家用/福岡/327a595e84bbd144d36b7d95ec7279b4.png		503	め	2313
+自家用/福岡/36e18330598a4244ecd576f1c6b7fe97.jpeg		330	す	6337
+自家用/福岡/38b45c9e.png		530	の	1169
+自家用/福岡/394aade4a7892bb567d0c355cb592492.png		503	わ	4924
+自家用/福岡/3bde4ca3.png		330	?	8815
+自家用/福岡/3f4c0c1e5d062f765036aaaac41e0f64.png		504	わ	1547
+自家用/福岡/3f4d5e895b3cd4ddd0ab45434f4b85ab.jpeg		541	す	.710
+自家用/福岡/3f8a31469fd6206343672a2db331867b.png		504	わ	4855
+自家用/福岡/420699c350a83b2e864d3ac7e14cb136.jpg		130	さ	4138
+自家用/福岡/5167add8854c14412d1f7abae8ec4c42.png		504	わ	3955
+自家用/福岡/52bcd554208cb5196785821af1ed569b.jpg		400	ほ	..76
+自家用/福岡/58c8038a5666f3cda694296f23470cf8.jpeg		501	め	7479
+自家用/福岡/59902fa93054b74ec981fa4e1c7ab6e1.png		502	ぬ	4821
+自家用/福岡/5ca540a6ef0dc64dc07ca402ea92550f.png		511	ち	1000
+自家用/福岡/5ef2ebe25dcbf459dff7ac70faceed57.jpeg		503	も	7460
+自家用/福岡/5fddaec69d4927d2ca8e95845b69b8e8.png		503	わ	8768
+自家用/福岡/632088e8f92c38aed92f065c12500426.png		504	わ	2527
+自家用/福岡/65876e6b05592cdfe5be6dbe1956a7a6.png		504	わ	1801
+自家用/福岡/70b1a91a27bc3ee11bb6e820e49f58d4.png		504	わ	.253
+自家用/福岡/7300fbb769ea2d412587baf907611eed.png		314	た	1001
+自家用/福岡/79ea0675b3657103f7e7bfb10ed170e4.png		504	わ	2331
+自家用/福岡/7cf8784c1f66fb4ee4681b6cf7609c9e.jpeg		504	わ	4241
+自家用/福岡/81572d90e7be7706661e7c8fab1a71f8.jpeg		400	ほ	9778
+自家用/福岡/81b88d0a94d1eccd2615e1c0fb069b48.jpg		400	ほ	9265
+自家用/福岡/81e8ce33e44ab4db32a60abe48e36208.jpeg		340	つ	1213
+自家用/福岡/84d021b956a5416846fb180f8f4c9f7f.jpeg		533	み	..69
+自家用/福岡/87bf094de639c684923b19f016030dae.png		301	わ	1535
+自家用/福岡/8a33a7ca63d75839f1ce425a0b810128.png		503	わ	4080
+自家用/福岡/8d6b573c5d1ea4974e62feb91b9bdc2c.png		503	ま	2046
+自家用/福岡/921e54d59899f2523169151d0fe0c13f.png		340	そ	.300
+自家用/福岡/94655dd7cf503cf3f280849bf5a77f9c.jpeg		501	は	8763
+自家用/福岡/95ed2da52fb5179d613aa68303f86141.png		502	ぬ	4821
+自家用/福岡/9e62a53bea20979065ab0c2ce9838472.jpeg		301	や	.957
+自家用/福岡/9e65c9d1e1bfc0428aaa34561a8fdae4.jpeg		830	そ	1023
+自家用/福岡/a02c1b8befd967a5c1741bf28e1d9f01.png		530	わ	1306
+自家用/福岡/a6e13b8e99ef1f6430452b94dcb0764f.jpeg		52	も	6291
+自家用/福岡/aa9dd0558f76d38e5260dc28197b5fda.jpeg		330	な	4026
+自家用/福岡/aab2470aa9ca1c2c52a8232e475dec8b.jpeg		502	め	3465
+自家用/福岡/b31d0ce105e81633b2d7ed7f1fa28a10.png		301	わ	2754
+自家用/福岡/b454bf57ded1ad1cae513265d5820e3b.jpeg		530	に	.350
+自家用/福岡/ba9267ddfa74d03a2d9b28a6a69d2c21.png		330	つ	3882
+自家用/福岡/c3d3893436e77909afb714e80caa3330.png		503	わ	9113
+自家用/福岡/c4400b3cd060ea746aa93eb498840c3c.jpeg		302	そ	6528
+自家用/福岡/c56c8fa62be1f201ab59809961736c15.jpeg		530	ゆ	..43
+自家用/福岡/c655180321c0bdc60cc4ac7c941e755a.jpeg		368	そ	8888
+自家用/福岡/c963c8a6c04b8ab97d401833cd043966.png		300	わ	9711
+自家用/福岡/cc413a4dae1e77e98b3e60690a888ec5.jpeg		330	そ	9175
+自家用/福岡/ce61af689487a1a30b597d86de875721.jpeg		538	た	.500
+自家用/福岡/d8504b948559780e78cb630d67d6d7a8.png		503	わ	1802
+自家用/福岡/d979396a.png		332	む	1358
+自家用/福岡/dd879f66e127e7a9879671c025932836.png		504	わ	5102
+自家用/福岡/e2e5b470f0ee3afd6c574481783e29ac.png		314	た	1001
+自家用/福岡/e52fe9675cf69af70c6fb46f5d847dde.png		504	わ	5709
+自家用/福岡/e651024b1f1c895478ad0ecc1594d878.png		503	わ	4924
+自家用/福岡/ec962a445d038899e16648487f93d97b.png		302	た	1479
+自家用/福岡/ed4ea4a6c36ab2df4ebc356201ab2aef.png		511	ち	1000
+自家用/福岡/ef58607da946603cb0c5743d2ed542e2.jpg		389	つ	..33
+自家用/福岡/f024a6b32a05b9781335251ce82d4f42.jpeg		503	ふ	6170
+自家用/福岡/f7707cca75bae94b07668a3bbe85aad9.jpeg		331	た	2817
+自家用/福岡/fd51c457e85468296bd3eea7938ba2a5.jpeg		345	せ	.525
+自家用/福岡/fdbd888b9503ab80fef45708a45fad5e.png		504	わ	1801
+自家用/福島/330164ce8fb8cda69ea87cae4c6ea332.jpeg		580	め	3312
+自家用/筑豊/06a4824c37afc0eb8b5554b8653ac672.jpeg		300	に	8618
+自家用/筑豊/1eb8460894bd27f1cef71b816964f434.png		530	さ	9228
+自家用/筑豊/33cd316a81524a6422a9c7f22b89e220.jpeg		500	ひ	9659
+自家用/筑豊/3ad0c3abd9777a008752ad2a5c5b0bd7.jpeg		300	に	.116
+自家用/筑豊/7aa2daad1179396aee729ce3ce77367c.png		530	さ	9422
+自家用/筑豊/89cc822ba446195d29f9b6d1ffef97ab.png		530	さ	9422
+自家用/筑豊/8a1ee0a01b5402e2621bc2b8c24faab9.jpeg		307	み	5000
+自家用/筑豊/c254b3d37436bbb496f74428c3e3df71.jpeg		300	に	7154
+自家用/筑豊/dbd6b21681f1a1faa9582b185be44ae3.jpeg		300	に	.829
+自家用/筑豊/f1c532f314281662b8fc2b0370647dee.png		530	さ	9422
+自家用/筑豊/f6e1e79d036e39e8bac4eb4352073d2e.jpeg		530	さ	.480
+自家用/練馬/666d556f538c5fbc8aca13ef9c2a8f66.png		800	す	5369
+自家用/練馬/e5937d36777d13603790e839d002a1f1.png		301	る	9418
+自家用/群馬/fa6ae2a5741fb2613eb73dea62ef1f41.png		337	や	2953
+自家用/習志野/3ead04d8d750c7dbd0c20a1f723f4e54.png		500	ら	3843
+自家用/習志野/736fb8fa864e30bc0d401622aed7d993.png		532	た	.925
+自家用/習志野/9e502f99ece678a1cf2d8c9a47b0b56f.png		500	ら	3843
+自家用/豊田/ffdc72106ed08e3f637fb48af0a59a4f.png		300	は	9800
+自家用/足立/69f357c24c07bc99da952ca03089bd5f.png		?	と	6666
+自家用/足立/84a255ef3ff1ca9109e4e4f23ae06801.png		535	て	1123
+自家用/足立/93785b4ff4bd4e54770a44bc3d6088f2.png		552	て	..77
+自家用/足立/99b167601511f5b435b0d23be0e345fa.jpg		5	す	1550
+自家用/足立/b92cf54b86ed159d7484ff144a1f6fce.png		331	そ	1088
+自家用/足立/c00e800d70de48dbdeaf62263f70a511.png		501	た	3625
+自家用/足立/f64d00aa05a673566c14fefb521581c6.png		400	と	4560
+自家用/野田/48d543ef8583d01026ad09039e843e74.png		319	な	.777
+自家用/金沢/452d527530e5756517f1c15516a366c7.jpg		599	さ	2046
+自家用/長崎/0341ddfbdb652adc5af2705f7ddb2bf9.jpg		500	む	9408
+自家用/長崎/04de7f0b10301da2792dbda893f1e6ed.jpg		330	み	1964
+自家用/長崎/0660673268f50785fc9c799a7045e348.jpg		330	む	.714
+自家用/長崎/06e6959d192f3d350eae8f42f6a51974.jpg		580	ね	6930
+自家用/長崎/08df063259ef6fe39248013e6f80cdfa.jpg		300	わ	1528
+自家用/長崎/08eb1e7c4aae97c9c106e6c6ff61934a.png		530	ぬ	1045
+自家用/長崎/0acb143a50e104bacb92fcb121bd5382.jpg		332	ろ	1115
+自家用/長崎/0c6d262b06b904b51a9c41273d4aec32.jpg		500	わ	5207
+自家用/長崎/143552597fb891f3b9afdb50ce910532.png		500	わ	8807
+自家用/長崎/15be7fa2fdcb6aa52b6d038bfa37227e.jpg		501	さ	5718
+自家用/長崎/2088df3d.png		500	わ	8858
+自家用/長崎/22cbc04399f75661570564ef2e7b7c31.png		545	た	2525
+自家用/長崎/23d58cbe1c47f02f96ffe203f2afa5cc.jpg		300	と	8153
+自家用/長崎/255d7a35.png		300	ひ	7758
+自家用/長崎/25f3db7f18f0f8833e532d04471ad555.png		300	て	6533
+自家用/長崎/263e6f450120569851986cdce0eedcb9.jpg		500	ら	4964
+自家用/長崎/299f95fc45067ac8a59f3251fd81ab76.png		500	ま	.938
+自家用/長崎/2a37ef82c2a3ddd03890c3ccef71b6c5.jpg		400	せ	1465
+自家用/長崎/2b5c517b649fcba2ae60dd9a9037af73.jpg		501	す	2988
+自家用/長崎/2bddab94e4c71c4f53c7d14084ef2907.png		300	て	6533
+自家用/長崎/2e2b652a058d2a3a44d832a86e1967c0.png		300	は	6219
+自家用/長崎/2ecacbc2e4d99405c5fc53a7fc160f6a.jpeg		331	つ	.666
+自家用/長崎/33f3e206a9ba0fb2542a3ddaec0374a9.png		330	さ	6763
+自家用/長崎/35a021c0db2d742f62a2f90119931b00.png		500	ま	.938
+自家用/長崎/392f234d6332475fffe3befa2262f50d.png		591	い	8008
+自家用/長崎/397a43520297101ad44ed6a9037e4699.jpg		300	の	5828
+自家用/長崎/3a11d1a66f73ed6ab1c9e03bf403b9a2.png		500	?	8787
+自家用/長崎/3a8cd646.png		533	?	1223
+自家用/長崎/3b4c9f22eae803d88a2cc0896bad8e9c.jpg		300	は	.725
+自家用/長崎/3b9672c52162e4eea56ccaaacce8651d.jpg		300	ね	3987
+自家用/長崎/3e0417945e2c3f1a05a634b962b8dec4.png		500	め	5207
+自家用/長崎/41c4a65cb753f070d09be1caf6ddab29.jpg		333	た	.101
+自家用/長崎/47c4425a.png		?	?	5500
+自家用/長崎/49400df83dc199cf0db88cf453d5bbb4.jpg		500	は	7409
+自家用/長崎/4ad50f83f4a4d0c11c46ecfee32d1186.jpg		332	の	..34
+自家用/長崎/4c87f7e3a463ad29c449caefbfe12ceb.jpeg		308	そ	.777
+自家用/長崎/4dbf0f109326cd744240f99f1fed41cf.jpeg		200	?	.831
+自家用/長崎/51f75dd547fda950182b09bb62ae2cf3.png		300	わ	1786
+自家用/長崎/54fbc24b5228ed46a83eadafc3817ea1.png		533	そ	1012
+自家用/長崎/5530339fd5778881419c308f864e3c2e.png		500	わ	8807
+自家用/長崎/56c0de34e92ce2839b2477aaaf8028a6.jpg		300	な	7002
+自家用/長崎/59d02254b656d6e52d1abf681f9b7218.jpg		536	ね	1001
+自家用/長崎/5e6f251011b78d73e225ab9733f2e15e.jpg		533	や	1110
+自家用/長崎/60fc0ffa0947b59b3afd21838f31a7e5.jpg		500	ら	2650
+自家用/長崎/63380d52db272c44a09d5a283b5aaab1.jpg		500	ら	5763
+自家用/長崎/649eddf37c67f6ad8cd39ec73dca141e.png		500	わ	7639
+自家用/長崎/69d9886a890234a57cc939cfc7b3a205.jpg		330	と	1276
+自家用/長崎/6a0b8554bf5296b84d01de0607711001.jpg		500	の	3825
+自家用/長崎/6a3723ca19d267b2903bc01c84339624.jpg		501	す	1347
+自家用/長崎/6cf7a719816cb486a6dd741ee25a1a6a.jpg		300	の	3318
+自家用/長崎/6e5426bf25ad2d835ff2cb28a480487f.jpg		300	ひ	7464
+自家用/長崎/74171046fd0386ac15a8c2ab04ba59c8.jpg		300	ね	9498
+自家用/長崎/74f636993c3df9139e9eaab622eb336c.jpg		300	は	1681
+自家用/長崎/76eccbbf5de024e6482ee6b56854a985.jpg		300	ひ	2795
+自家用/長崎/7a27b7d7c109c334fc3c5eedf35be59f.jpeg		330	そ	2129
+自家用/長崎/7c9855589c14cc507de3dbe75e7b3f69.jpg		500	ゆ	4934
+自家用/長崎/7d206aebdc39429cb65e77fdc6919674.jpg		300	て	3759
+自家用/長崎/7ff72d3eed97e3ce57e0c6ce9336e219.png		591	い	8008
+自家用/長崎/817af9279d9e20ff2b7b82177a6f8db7.jpg		530	て	1323
+自家用/長崎/831a6ed26e05b04a6d7efffeb8075214.jpg		500	む	9963
+自家用/長崎/8c77f54621f9986d3f27c95db825f5d2.png		300	わ	1786
+自家用/長崎/8ce2dc1d493db868ff5b3c8dd565cd13.jpg		500	も	9599
+自家用/長崎/8d4651597c061610beadaa356f654472.jpg		501	さ	6626
+自家用/長崎/8ebcb33d6c177b357e191b76b43b40ad.jpeg		300	ひ	4609
+自家用/長崎/94f2d1310dcf99433c58062d18462ff8.jpg		530	す	9608
+自家用/長崎/95554b4829f1e3f5030872441bd5fc82.png		500	わ	8208
+自家用/長崎/9599266405a69384a614c48c9dbbfc23.png		501	す	3352
+自家用/長崎/96a9838c4226c722277beafa774851a8.jpg		500	も	6794
+自家用/長崎/998fcf768684a89117b4c0b7290281c2.jpg		300	ひ	2563
+自家用/長崎/99af48e6511e91f1728e569b60921634.jpg		330	さ	4183
+自家用/長崎/9b6ad0025b51682bdcdd0e9cabd7b2a4.jpg		500	の	3825
+自家用/長崎/9ce01e3815686100830fbbeafeac7018.jpg		300	な	6059
+自家用/長崎/V1hSVVTW3kyKzgzf7hmhzsfDN.png		501	さ	1683
+自家用/長崎/a39aec55c8c595abdb02e43c038612c6.jpg		501	さ	7603
+自家用/長崎/abe26d4d8c5721c4fb27466e0850c2c4.png		530	?	1958
+自家用/長崎/ae2050b9f1c472dad70c46270e42380f.jpg		500	も	8737
+自家用/長崎/bbf23f6e7ef31b4fdaba66f34334af51.jpg		300	ね	5364
+自家用/長崎/c013bd7ac999ece398a4f92a65d64f23.jpg		509	と	.777
+自家用/長崎/c0bbdc2a4db08844ae6be2aa30229305.jpg		583	く	1939
+自家用/長崎/c33491f3f8f263c2c4fa8db2133084e1.jpg		300	に	8805
+自家用/長崎/ca0d71f00783850d91a0be7d1e46aa86.png		530	ぬ	1045
+自家用/長崎/ca889fb1636569f653c12a9b5fc86eed.png		500	ゆ	4108
+自家用/長崎/caebc7d8119140cd500eeae86c8e59aa.png		500	ほ	7846
+自家用/長崎/cba16576acab43e3457946d1eef4ecfb.jpg		338	ま	.358
+自家用/長崎/ce4b7a05ba3f2c00c9de05c96bb17717.png		531	ゆ	3578
+自家用/長崎/cfdac145516011f77224b38fd26bb7a6.png		500	も	2311
+自家用/長崎/d17d77d0f75c56574a1001b64c7b43b2.jpg		331	ろ	1119
+自家用/長崎/d1a6f955808661f9f53e32affe6b20d6.png		500	?	8371
+自家用/長崎/d22aaa3641f48c3d56d244eb36d32c23.jpg		530	す	9020
+自家用/長崎/d5ca9611.png		500	?	4497
+自家用/長崎/e4464c788b81537d207496cd22585568.jpg		501	さ	7121
+自家用/長崎/e7697faa44d01b560472af1490f11007.png		500	ゆ	4108
+自家用/長崎/e7846252cf8088492d5f155d7f18206b.jpg		300	の	2019
+自家用/長崎/ea67c978eb616209754692bbbe6a2a41.jpg		331	と	1016
+自家用/長崎/ea9f9b6879a4fd0cce07e04297224373.png		500	わ	6821
+自家用/長崎/f5db8a2a6f2d279cb33c2282f77d48e5.jpg		343	も	2525
+自家用/長崎/f96b3bf99d71deca82b782a297e433ed.jpg		545	る	1122
+自家用/長崎/fc00a0fad4be84fae73fee27de675ea9.png		300	の	6685
+自家用/長崎/fcad9aa916dbf957d4554d6164429d6c.png		531	ゆ	3578
+自家用/長崎/ff6d6e4e45cb0e97c504b53e72d7e30f.png		533	そ	1012
+自家用/長野/b9eb37ec.png		33	は	2984
+自家用/長野/d484f2d7.png		33	は	2984
+自家用/静岡/18772c69144550e5a1633d67b057fd47.png		400	つ	5253
+自家用/静岡/2d6c91645ba0916e4a888cd6871dbf90.jpg		300	る	...1
+自家用/香川/cdda28fe9d6bee0371206da2cbd096cc.png		300	ぬ	5829
+自家用/香川/fa5c5b6566f0ed132e0775611ce54f99.jpg		400	す	4588
+自家用/鳥取/ac1d0342d368b8c2533072cde0fe455e.png		300	の	3562
+自家用/鳥取/e6b08d144c0705ce22a137cbbe80b58c.png		331	ち	.511
+自家用/鹿児島/04fff4592d551e73d4a517d1fca99bd6.png		331	り	1610
+自家用/鹿児島/490c6def.png		530	み	3107
+自家用/鹿児島/4923675a.png		501	さ	5307
+自家用/鹿児島/49d0993069feb7a21d7a380ceb49d32e.png		502	わ	2488
+自家用/鹿児島/5a65bde8457149fb4c60a52e9e93cec1.png		502	わ	.636
+自家用/鹿児島/5e93da5ded74375c450175c067cf0613.png		501	わ	8717
+自家用/鹿児島/6504c22115af50572b0a118dfe347178.jpeg		340	ふ	.310
+自家用/鹿児島/815b8e51d05a155bea15c9825bf9f7ca.jpeg		501	は	8220
+自家用/鹿児島/88db3052ba717448aeb4826c8d129988.png		300	わ	2602
+自家用/鹿児島/8b42af71367f3d373910574d1fe89beb.png		300	わ	2602
+自家用/鹿児島/c661c0956a4a5e2ff4e7700297a463fe.png		331	り	1610
+自家用/鹿児島/cf3592ef1b92088c7652d98c70de14e9.jpeg		502	わ	..84
+自家用/鹿児島/cf70b30b4321383908fae8f5e393a564.png		501	わ	8717
+自家用/鹿児島/d7f3fa8f567c024cd2b511d0336a567c.png		501	わ	8990
+自家用/鹿児島/f8dcb2b4bff3749f43520a2999261aa0.png		502	わ	1401
+自家用/鹿児島/ff47d51b3f8fbffcc263058d58d24de5.png		301	さ	6624

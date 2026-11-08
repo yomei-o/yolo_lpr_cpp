@@ -2,6 +2,20 @@
 
 方針は [README.md](README.md)。ここは**現在地・次の一手・未確認事項**を書き続けるファイル。
 
+## 2026-11-09: 外で使って見つかった不具合を直した
+
+lpr_analyzer_cpp で認識器をゼロから学習したときに見つかったもの。
+
+- **Droid の版の数字が豆腐だった**: `DroidSansFallbackFull.ttf` に ASCII が無く、合成のおよそ半分で 4 桁と分類番号が
+  .notdef の箱で描かれていた。無い字だけ GenSen から借りるようにした（C++ / Python とも）。
+  `tools/parity/gen.py` / `gen_det.py` は PASS のまま（labels / meta / corners がバイト一致）
+- **軽・事業用の 553 枚を学習に使えなかった**: alpr_jp の `自家用(軽)/ 事業用/ 事業用(軽)/` は地名フォルダに
+  分かれていないので、フォルダ名をラベルにする読み込みでは使えない。手で書き起こした `spec/alpr_labels.tsv`
+  （1273 枚、全 head）と `--alpr-labels` を両方の学習器に入れた。`tools/parity/train.py --alpr-labels` で 20 step PASS
+- **C++ の `read_alpr` の「軽」が簡体字「轻」のバイト列だった**（E8 BD BB）。地名のサブフォルダが無いので結果は
+  変わっていなかったが、上の 553 枚を読もうとして見つかった
+- **alpr_jp の `自家用/大分/` に長崎ナンバーが 2 枚**: `spec/alpr_labels.tsv` の region 列で直す
+
 ## 現在地（2026-08-19 夜）
 
 **3 段すべて自前の学習済みモデルで動いている。** 検出も認識も 4隅補正も学習を回し終え、

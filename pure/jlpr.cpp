@@ -155,6 +155,15 @@ static int cmd_gen(int argc, char** argv) {
       return 1;
     }
   }
+  // --font pins the drawn face, but glyphs it lacks (Droid has no ASCII digits) are still borrowed
+  // from the rest of the set, so pinning never brings back the .notdef boxes.
+  std::vector<gen::Font> fb_fonts;
+  if (!meta_only && !only_font.empty())
+    for (const std::string& f : gen::font_files(font_dir, "", fmanifest)) {
+      gen::Font fo;
+      if (gen::load_font(f, fo)) fb_fonts.push_back(std::move(fo));
+    }
+  const std::vector<gen::Font>* fallbacks = fb_fonts.empty() ? nullptr : &fb_fonts;
 
   make_dir(out);
   std::string mode = start > 0 ? "ab" : "wb";
@@ -193,12 +202,12 @@ static int cmd_gen(int argc, char** argv) {
       Rng trng(seed ^ ((uint64_t)i * 0x9E3779B97F4A7C15ull));   // same stream, texture only
       gen::Params tp = gen::sample(trng, sp);
       (void)trng.below((uint64_t)font_names.size());
-      gen::Img tex = gen::plate_texture(tp, sp, fonts, font_idx, trng);
+      gen::Img tex = gen::plate_texture(tp, sp, fonts, font_idx, trng, fallbacks);
       char tn[64];
       snprintf(tn, sizeof tn, "tex%06d.png", i);
       stbi_write_png((out + "/" + tn).c_str(), tex.w, tex.h, 3, tex.d.data(), tex.w * 3);
     }
-    gen::Rendered R = gen::render(p, sp, fonts, font_idx, out_px, rng);
+    gen::Rendered R = gen::render(p, sp, fonts, font_idx, out_px, rng, fallbacks);
     stbi_write_png((out + "/" + name).c_str(), R.crop.w, R.crop.h, 3, R.crop.d.data(), R.crop.w * 3);
     char cl[256];
     snprintf(cl, sizeof cl, "%s %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %s\n", name,
@@ -287,6 +296,14 @@ static int cmd_gen_det(int argc, char** argv) {
     }
     if (fonts.empty()) { printf("no usable font in %s\n", font_dir.c_str()); return 1; }
   }
+  // --font pins the drawn face; glyphs it lacks are still borrowed from the whole set (see `gen`)
+  std::vector<gen::Font> fb_fonts;
+  if (!meta_only && !only_font.empty())
+    for (const std::string& f : gen::font_files(font_dir, "", fmanifest)) {
+      gen::Font fo;
+      if (gen::load_font(f, fo)) fb_fonts.push_back(std::move(fo));
+    }
+  const std::vector<gen::Font>* fallbacks = fb_fonts.empty() ? nullptr : &fb_fonts;
 
   make_dir(out);
   make_dir(out + "/images");
@@ -360,7 +377,7 @@ static int cmd_gen_det(int argc, char** argv) {
           got_real = true;
         }
       }
-      if (!got_real) tex = gen::plate_texture(pl.p, sp, fonts, pl.font_idx % (int)fonts.size(), rng);
+      if (!got_real) tex = gen::plate_texture(pl.p, sp, fonts, pl.font_idx % (int)fonts.size(), rng, fallbacks);
       gen::paste_textured_quad(canvas, tex, pl.quad);
     }
 
@@ -1173,6 +1190,8 @@ static int cmd_train(int argc, char** argv) {
   std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string synth = arg_of(argc, argv, "--synth", "");
   std::string alpr = arg_of(argc, argv, "--alpr", "");
+  // spec/alpr_labels.tsv: every head on the real crops + the 553 flat-folder (kei / commercial) ones
+  std::string alpr_labels = arg_of(argc, argv, "--alpr-labels", "");
   std::string out = arg_of(argc, argv, "--export", "");            // best real hold-out checkpoint
   std::string out_last = arg_of(argc, argv, "--export-last", "");  // the final step
   std::string out_balanced = arg_of(argc, argv, "--export-balanced", "");
@@ -1193,14 +1212,21 @@ static int cmd_train(int argc, char** argv) {
   std::vector<trn::Item> synth_items, alpr_items;
   std::vector<int> alpr_train, alpr_val;
   if (!alpr.empty()) {
-    alpr_items = trn::read_alpr(alpr, sp);
-    trn::split_holdout(alpr_items.size(), 0.2, alpr_train, alpr_val);
+    size_t n_folder = 0;
+    alpr_items = trn::read_alpr(alpr, sp, alpr_labels, &n_folder);
+    trn::split_holdout(n_folder, 0.2, alpr_train, alpr_val);
+    // the flat-folder crops (only with --alpr-labels) get their own split, so the original one stays
+    std::vector<int> ft, fv;
+    trn::split_holdout(alpr_items.size() - n_folder, 0.2, ft, fv);
+    for (int i : ft) alpr_train.push_back((int)n_folder + i);
+    for (int i : fv) alpr_val.push_back((int)n_folder + i);
   }
   // regions the real training split covers -> the rest are taught from synthetic (see read_synth)
   std::set<int> uncovered;
   if (!alpr_items.empty()) {
     std::set<int> covered;
-    for (int i : alpr_train) covered.insert(alpr_items[(size_t)i].heads[0]);
+    for (int i : alpr_train)
+      if (alpr_items[(size_t)i].mask[0] > 0.f) covered.insert(alpr_items[(size_t)i].heads[0]);
     for (int r = 0; r < sp.head("region").n; ++r) if (!covered.count(r)) uncovered.insert(r);
     if (!dump_loss)
       printf("real data covers %zu of %d regions; synthetic teaches the other %zu\n", covered.size(),

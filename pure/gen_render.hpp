@@ -178,39 +178,56 @@ inline std::vector<int> utf8_codepoints(const std::string& s) {
   return cps;
 }
 
+// The face that draws codepoint `cp`: `f` itself when it has the glyph, otherwise the first face in
+// `fallbacks` that does. DroidSansFallbackFull has no ASCII at all (it is a CJK *fallback* face), so
+// without this every digit of a Droid-drawn plate came out as the .notdef box and roughly half of
+// the synthetic 4-digit / class-number labels taught nothing. The rng draws are untouched: the face
+// is still draw #29 and meta.txt still records it, only the missing glyphs are borrowed.
+inline const Font& glyph_face(const Font& f, const std::vector<Font>* fallbacks, int cp) {
+  if (stbtt_FindGlyphIndex(&f.info, cp) != 0 || !fallbacks) return f;
+  for (const Font& g : *fallbacks)
+    if (g.ok && stbtt_FindGlyphIndex(&g.info, cp) != 0) return g;
+  return f;
+}
+
 // Draw `text` so that its glyph box is `px_h` tall, centred on (cx, baseline_y is derived).
 // Returns the drawn width. `track` widens the letter spacing (plate lettering is airy).
 inline float draw_text(Img& im, const Font& f, const std::string& text, float cx, float cy,
-                       float px_h, Rgb colour, float track = 0.06f, float max_w = 0.f) {
+                       float px_h, Rgb colour, float track = 0.06f, float max_w = 0.f,
+                       const std::vector<Font>* fallbacks = nullptr) {
   if (!f.ok) return 0;
-  float scale = stbtt_ScaleForPixelHeight(&f.info, px_h);
   std::vector<int> cps = utf8_codepoints(text);
+  std::vector<const Font*> face(cps.size());
+  std::vector<float> sc(cps.size());
   // measure
   float total = 0;
   std::vector<float> adv(cps.size(), 0);
   for (size_t i = 0; i < cps.size(); ++i) {
+    face[i] = &glyph_face(f, fallbacks, cps[i]);
+    sc[i] = stbtt_ScaleForPixelHeight(&face[i]->info, px_h);
     int a = 0, lsb = 0;
-    stbtt_GetCodepointHMetrics(&f.info, cps[i], &a, &lsb);
-    adv[i] = a * scale * (1.0f + track);
+    stbtt_GetCodepointHMetrics(&face[i]->info, cps[i], &a, &lsb);
+    adv[i] = a * sc[i] * (1.0f + track);
     total += adv[i];
   }
   if (max_w > 0 && total > max_w) {          // 4-char region names are squeezed on real plates too
     float k2 = max_w / total;
-    scale *= k2;
+    for (float& v : sc) v *= k2;
     for (float& v : adv) v *= k2;
     total = max_w;
   }
   float x = cx - total / 2;
-  int asc = 0, desc = 0, gap = 0;
-  stbtt_GetFontVMetrics(&f.info, &asc, &desc, &gap);
-  float baseline = cy + (asc + desc) * 0.5f * scale;      // vertically centre the em box on cy
   // Japanese plates have RAISED characters: light from above leaves a highlight on the upper-left
   // edge and a shadow on the lower-right. Faking that costs two extra blits and is most of what
   // makes a synthetic plate stop looking like a screenshot of a font.
   const int e = std::max(1, (int)std::round(px_h * 0.035f));
   for (size_t i = 0; i < cps.size(); ++i) {
+    int asc = 0, desc = 0, gap = 0;
+    stbtt_GetFontVMetrics(&face[i]->info, &asc, &desc, &gap);
+    float baseline = cy + (asc + desc) * 0.5f * sc[i];    // vertically centre the em box on cy
     int bw = 0, bh = 0, xo = 0, yo = 0;
-    unsigned char* bmp = stbtt_GetCodepointBitmap(&f.info, scale, scale, cps[i], &bw, &bh, &xo, &yo);
+    unsigned char* bmp =
+        stbtt_GetCodepointBitmap(&face[i]->info, sc[i], sc[i], cps[i], &bw, &bh, &xo, &yo);
     if (bmp) {
       int gx = (int)std::round(x + (adv[i] - bw) * 0.5f);   // centre the glyph in its advance
       int gy = (int)std::round(baseline + yo);
@@ -252,8 +269,11 @@ inline void fill_circle(Img& im, float cx, float cy, float r, Rgb c) {
 }
 
 // ---- plate texture (flat art, 2 px/mm) -------------------------------------------------------
+// `fallbacks`: where glyphs the drawn face lacks are borrowed from (glyph_face). Defaults to `fonts`;
+// jlpr passes the full set when `--font` pins one face, so a pinned Droid still gets real digits.
 inline Img plate_texture(const Params& p, const spec::Spec& sp, const std::vector<Font>& fonts,
-                         int font_idx, Rng& rng) {
+                         int font_idx, Rng& rng, const std::vector<Font>* fallbacks = nullptr) {
+  if (!fallbacks) fallbacks = &fonts;
   // Resolution follows how big the plate will actually appear: drawing 660x330 art for a plate that
   // lands 30 px wide is ~20x wasted work, and the downsampling throws the detail away anyway. Two
   // texture pixels per destination pixel is enough for clean bilinear minification.
@@ -293,12 +313,12 @@ inline Img plate_texture(const Params& p, const spec::Spec& sp, const std::vecto
 
   // 上段: 地名（左）と分類番号（右）
   const spec::Group& reg = sp.head("region");
-  draw_text(im, f, reg.tok[p.region], X(95), Y(40), Y(40), p.fg, 0.02f, X(150));
-  draw_text(im, f, p.cls_text, X(245), Y(40), Y(42), p.fg, 0.08f, X(140));
+  draw_text(im, f, reg.tok[p.region], X(95), Y(40), Y(40), p.fg, 0.02f, X(150), fallbacks);
+  draw_text(im, f, p.cls_text, X(245), Y(40), Y(42), p.fg, 0.08f, X(140), fallbacks);
 
   // 下段: ひらがな（左）と一連番号（右、2桁ずつハイフン区切り、空き桁は ・）
   const spec::Group& hira = sp.head("hiragana");
-  draw_text(im, f, hira.tok[p.hira], X(40), Y(118), Y(58), p.fg, 0.f);
+  draw_text(im, f, hira.tok[p.hira], X(40), Y(118), Y(58), p.fg, 0.f, 0.f, fallbacks);
   std::string left, right;
   {
     std::string s4 = p.serial_text;
@@ -314,9 +334,9 @@ inline Img plate_texture(const Params& p, const spec::Spec& sp, const std::vecto
     left = put(cps[0]) + put(cps[1]);
     right = put(cps[2]) + put(cps[3]);
   }
-  draw_text(im, f, left, X(140), Y(118), Y(86), p.fg, 0.10f);
+  draw_text(im, f, left, X(140), Y(118), Y(86), p.fg, 0.10f, 0.f, fallbacks);
   fill_rounded(im, X(196), Y(115), X(214), Y(122), 1.f, p.fg);     // ハイフン
-  draw_text(im, f, right, X(270), Y(118), Y(86), p.fg, 0.10f);
+  draw_text(im, f, right, X(270), Y(118), Y(86), p.fg, 0.10f, 0.f, fallbacks);
 
   // ボルト・封印・フレーム
   if (p.bolts >= 2) {
@@ -502,10 +522,10 @@ inline void synth_background(Img& im, double bg_hue, double bg_dark, Rng& rng) {
 // Render one plate at `plate_px` wide, centred on (cx,cy) of `canvas`; returns its 4 corners.
 inline Quad paste_plate(Img& canvas, const Params& p_in, const spec::Spec& sp,
                         const std::vector<Font>& fonts, int font_idx, double cx, double cy,
-                        double plate_px, Rng& rng) {
+                        double plate_px, Rng& rng, const std::vector<Font>* fallbacks = nullptr) {
   Params p = p_in;
   p.plate_px = plate_px;
-  Img tex = plate_texture(p, sp, fonts, font_idx, rng);
+  Img tex = plate_texture(p, sp, fonts, font_idx, rng, fallbacks);
   Quad q = project_plate(p, cx, cy);
   paste_textured_quad(canvas, tex, q);
   return q;
@@ -586,10 +606,11 @@ struct Rendered {
 };
 
 inline Rendered render(const Params& p, const spec::Spec& sp, const std::vector<Font>& fonts,
-                      int font_idx, int out_px, Rng& rng) {
+                      int font_idx, int out_px, Rng& rng,
+                      const std::vector<Font>* fallbacks = nullptr) {
   Rendered R;
   R.font = fonts[font_idx].name;
-  Img tex = plate_texture(p, sp, fonts, font_idx, rng);
+  Img tex = plate_texture(p, sp, fonts, font_idx, rng, fallbacks);
 
   const int canvas = std::max(64, (int)std::ceil(p.plate_px * 2.4));
   const double cx = canvas * 0.5, cy = canvas * 0.5;

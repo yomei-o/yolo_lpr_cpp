@@ -187,23 +187,51 @@ def font_files(font_dir, only="", manifest=""):
 
 
 # ---- rendering (PIL) ------------------------------------------------------------------------
-def _draw_text(d, font_path, text, cx, cy, px_h, colour, track=0.06, max_w=0):
+_HAS_GLYPH = {}
+
+
+def _has_glyph(font_path, ch):
+    """True when the face maps `ch`. PIL has no cmap query, so compare against the .notdef box a
+    surely-unmapped codepoint (U+10FFFD, private use) produces — what a missing glyph draws too."""
+    key = (font_path, ch)
+    if key not in _HAS_GLYPH:
+        from PIL import ImageFont
+        f = ImageFont.truetype(font_path, 32)
+        m, n = f.getmask(ch), f.getmask("􏿽")
+        _HAS_GLYPH[key] = not (m.size == n.size and bytes(m) == bytes(n))
+    return _HAS_GLYPH[key]
+
+
+def _glyph_face(font_path, fallbacks, ch):
+    """Same rule as glyph_face() in gen_render.hpp: the drawn face when it has `ch`, else the first
+    face in `fallbacks` that does. DroidSansFallbackFull has no ASCII, so without this every digit of
+    a Droid-drawn plate was the .notdef box. The rng draws are untouched (the face is still draw #29)."""
+    if _has_glyph(font_path, ch):
+        return font_path
+    for fb in fallbacks:
+        if _has_glyph(fb, ch):
+            return fb
+    return font_path
+
+
+def _draw_text(d, font_path, text, cx, cy, px_h, colour, track=0.06, max_w=0, fallbacks=()):
     """Centre `text` on (cx, cy) with an embossed (raised) look, like gen_render.hpp does."""
     from PIL import ImageFont
+    faces = [_glyph_face(font_path, fallbacks, ch) for ch in text]
     size = max(4, int(round(px_h)))
-    f = ImageFont.truetype(font_path, size)
+    fonts = [ImageFont.truetype(fp, size) for fp in faces]
     spacing = int(round(size * track))
-    widths = [d.textlength(ch, font=f) + spacing for ch in text]
+    widths = [d.textlength(ch, font=f) + spacing for ch, f in zip(text, fonts)]
     total = sum(widths)
     if max_w and total > max_w:
         size = max(4, int(round(size * max_w / total)))
-        f = ImageFont.truetype(font_path, size)
+        fonts = [ImageFont.truetype(fp, size) for fp in faces]
         spacing = int(round(size * track))
-        widths = [d.textlength(ch, font=f) + spacing for ch in text]
+        widths = [d.textlength(ch, font=f) + spacing for ch, f in zip(text, fonts)]
         total = sum(widths)
     x = cx - total / 2
     e = max(1, int(round(px_h * 0.035)))
-    for ch, w in zip(text, widths):
+    for ch, w, f in zip(text, widths, fonts):
         bbox = d.textbbox((0, 0), ch, font=f, anchor="lt")
         gx = x + (w - (bbox[2] - bbox[0])) / 2 - bbox[0]
         gy = cy - (bbox[3] + bbox[1]) / 2
@@ -214,7 +242,7 @@ def _draw_text(d, font_path, text, cx, cy, px_h, colour, track=0.06, max_w=0):
     return total
 
 
-def plate_texture(p, sp, font_path, rng):
+def plate_texture(p, sp, font_path, rng, fallbacks=()):
     from PIL import Image, ImageDraw
     # same rule as gen_render.hpp: texture resolution follows the plate's on-screen size
     mm = min(2.5, max(0.5, 2.0 * p.plate_px / 330.0))
@@ -243,15 +271,15 @@ def plate_texture(p, sp, font_path, rng):
 
     reg = sp.head("region")
     hira = sp.head("hiragana")
-    _draw_text(d, font_path, reg.tok[p.region], X(95), Y(40), Y(40), tuple(p.fg), 0.02, X(150))
-    _draw_text(d, font_path, p.cls_text, X(245), Y(40), Y(42), tuple(p.fg), 0.08, X(140))
-    _draw_text(d, font_path, hira.tok[p.hira], X(40), Y(118), Y(58), tuple(p.fg), 0.0)
+    _draw_text(d, font_path, reg.tok[p.region], X(95), Y(40), Y(40), tuple(p.fg), 0.02, X(150), fallbacks=fallbacks)
+    _draw_text(d, font_path, p.cls_text, X(245), Y(40), Y(42), tuple(p.fg), 0.08, X(140), fallbacks=fallbacks)
+    _draw_text(d, font_path, hira.tok[p.hira], X(40), Y(118), Y(58), tuple(p.fg), 0.0, fallbacks=fallbacks)
     s4 = p.serial_text
     while len(s4) < 4:
         s4 = "・" + s4
-    _draw_text(d, font_path, s4[:2], X(140), Y(118), Y(86), tuple(p.fg), 0.10)
+    _draw_text(d, font_path, s4[:2], X(140), Y(118), Y(86), tuple(p.fg), 0.10, fallbacks=fallbacks)
     d.rounded_rectangle([X(196), Y(115), X(214), Y(122)], radius=1, fill=tuple(p.fg))
-    _draw_text(d, font_path, s4[2:], X(270), Y(118), Y(86), tuple(p.fg), 0.10)
+    _draw_text(d, font_path, s4[2:], X(270), Y(118), Y(86), tuple(p.fg), 0.10, fallbacks=fallbacks)
 
     def circle(cx, cy, rr, col):
         d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=col)
@@ -312,9 +340,9 @@ def project_plate(p, cx, cy):
     return [(cx + f * c[0] / (dist + c[2]), cy + f * c[1] / (dist + c[2])) for c in c3]
 
 
-def render(p, sp, font_path, out_px, rng):
+def render(p, sp, font_path, out_px, rng, fallbacks=()):
     from PIL import Image, ImageFilter
-    tex = plate_texture(p, sp, font_path, rng)
+    tex = plate_texture(p, sp, font_path, rng, fallbacks)
     canvas = max(64, int(math.ceil(p.plate_px * 2.4)))
     q = project_plate(p, canvas * 0.5, canvas * 0.5)
 
@@ -439,6 +467,8 @@ def main():
     if not font_paths:
         raise SystemExit("no fonts in %s — run: python tools/fetch_fonts.py --include-system" % a.fonts)
     font_names = [os.path.basename(f) for f in font_paths]
+    # --font pins the drawn face; glyphs it lacks are still borrowed from the whole set (as jlpr does)
+    fallbacks = font_files(a.fonts, "", manifest) if a.font else font_paths
 
     os.makedirs(a.out, exist_ok=True)
     mode = "ab" if a.start > 0 else "wb"
@@ -464,7 +494,7 @@ def main():
         fl.write(labels_line(name, p).encode("utf-8"))
         if a.meta_only:
             continue
-        crop, corners = render(p, sp, font_paths[fi], a.out_px, rng)
+        crop, corners = render(p, sp, font_paths[fi], a.out_px, rng, fallbacks)
         crop.save(os.path.join(a.out, name))
         fc.write((name + "".join(" %.2f" % v for v in corners) + " " + font_names[fi] + "\n").encode("utf-8"))
         if not a.quiet and i - a.start < 12:
