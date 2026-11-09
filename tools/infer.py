@@ -530,7 +530,8 @@ def main(argv):
     import argparse
     ap = argparse.ArgumentParser(prog="infer.py")
     ap.add_argument("--img", required=True)
-    ap.add_argument("--det", default=os.path.join(ROOT, "models", "plate_det_pyj320.onnx"))
+    # default: the BSD-3-Clause detector (random init, lpr_analyzer_cpp). PlateYOLO-JP needs --fmt xyxy.
+    ap.add_argument("--det", default=os.path.join(ROOT, "models", "plate_det_scratch_640.onnx"))
     ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr_scratch.onnx"))
     ap.add_argument("--spec", default=os.path.join(ROOT, "spec", "labels.txt"))
     ap.add_argument("--out", default="")
@@ -541,7 +542,7 @@ def main(argv):
     ap.add_argument("--corner", default="", help="corner regressor ONNX (M6); enables rectification")
     ap.add_argument("--box", nargs=4, type=float, default=None)
     ap.add_argument("--det-kind", dest="det_kind", default="v8", choices=["yolox", "v8", "plateyolo"])
-    ap.add_argument("--fmt", default="xyxy", choices=["xyxy", "cxcywh"],
+    ap.add_argument("--fmt", default="cxcywh", choices=["xyxy", "cxcywh"],
                     help="v8 box layout: PlateYOLO(NMS stripped)=xyxy, plain Ultralytics export=cxcywh")
     ap.add_argument("--rot-search", dest="rot_search", default="0",
                     help="also look in the frame rotated by these angles, e.g. 0,30,-30 (tilted plates)")

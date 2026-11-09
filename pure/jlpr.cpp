@@ -2373,7 +2373,8 @@ static int cmd_rgba(int argc, char** argv) {
 
 static int cmd_detect(int argc, char** argv) {
   std::string img = arg_of(argc, argv, "--img", "");
-  std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_pyj320.onnx");
+  // default: the BSD-3-Clause detector (random init, lpr_analyzer_cpp). PlateYOLO-JP needs --fmt xyxy.
+  std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_scratch_640.onnx");
   std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_scratch.onnx");
   std::string corner_p = arg_of(argc, argv, "--corner", "");   // empty = box crop + margin TTA
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
@@ -2390,7 +2391,7 @@ static int cmd_detect(int argc, char** argv) {
     cfg.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "0").c_str());
     // Box layout is declared, not sniffed: PlateYOLO-JP cut before its NMS gives xyxy, a plain
     // Ultralytics export gives cxcywh. Guessing wrong yields plausible boxes in the wrong place.
-    cfg.v8_fmt = (arg_of(argc, argv, "--fmt", "xyxy") == "cxcywh") ? BoxFmt::CXCYWH : BoxFmt::XYXY;
+    cfg.v8_fmt = (arg_of(argc, argv, "--fmt", "cxcywh") == "cxcywh") ? BoxFmt::CXCYWH : BoxFmt::XYXY;
   } else {
     cfg.imgsz = std::atoi(arg_of(argc, argv, "--imgsz", "416").c_str());
   }

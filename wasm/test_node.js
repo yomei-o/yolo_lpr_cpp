@@ -27,7 +27,7 @@ const MIN_DET = Number(process.env.MIN_DET || 0.35);
 const DET_KIND = Number(process.env.DET_KIND || 2);
 // keep these in step with wasm/index.html's DETECTORS/OCRS defaults, or the test grades a
 // configuration nobody runs
-const DET_PATH = process.env.DET_PATH || path.join(ROOT, 'models', 'plate_det_v8n_640.onnx');
+const DET_PATH = process.env.DET_PATH || path.join(ROOT, 'models', 'plate_det_scratch_640.onnx');
 // The demo loads the corner model, so the test has to as well or it exercises a path nobody uses:
 // without it the reading falls back to multi-margin TTA, which on the close-up black plate reads
 // 練馬 instead of 横浜. CORNER_PATH=none turns it off deliberately.
