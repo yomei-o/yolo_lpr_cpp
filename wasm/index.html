@@ -62,7 +62,8 @@
   </label>
   <label>認識器
     <select id="ocrsel">
-      <option value="ft1">自前学習＋自社の実写で追加学習（既定、BSD-3-Clause）</option>
+      <option value="syn1">自前学習・公開データ＋合成で全国の地名（既定、BSD-3-Clause）</option>
+      <option value="ft1">自前学習＋自社の実写で追加学習（BSD-3-Clause）</option>
       <option value="scratch">自前学習のみ（ランダム初期化から、BSD-3-Clause）</option>
     </select>
   </label>
@@ -98,9 +99,10 @@ const DETECTORS = {
   v8n: { path: '../models/plate_det_v8n_320.onnx', kind: 2, label: 'yolov8n 320・yolov8n.pt から転移（AGPL）' },
   pyj: { path: '../models/plate_det_pyj320.onnx', kind: 1, label: 'PlateYOLO-JP 320（借り物）' },
 };
-// One recogniser: trained from random initialisation in lpr_analyzer_cpp (BSD-3-Clause). The earlier
+// Recognisers, all trained from random initialisation in lpr_analyzer_cpp (BSD-3-Clause). The earlier
 // v7_bal / v6_last were derived from lpr_cpp's weights and were removed on 2026-11-09.
 const OCRS = {
+  syn1: { path: '../models/plate_ocr_syn1.onnx', label: '自前学習・公開データ＋合成 (syn1)' },
   ft1: { path: '../models/plate_ocr_ft1.onnx', label: '自前学習＋実写で追加学習 (ft1)' },
   scratch: { path: '../models/plate_ocr_scratch.onnx', label: '自前学習 (scratch)' },
 };

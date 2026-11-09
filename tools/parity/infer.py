@@ -115,7 +115,7 @@ def main():
     ap.add_argument("--img", default=os.path.join(ROOT, "assets", "tokyu-bus-yokohama200ka3591.jpg"))
     ap.add_argument("--det", default=os.path.join(ROOT, "models", "plate_det_pyj320.onnx"))
     ap.add_argument("--det-kind", dest="det_kind", default="v8")
-    ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr_ft1.onnx"))
+    ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr_syn1.onnx"))
     ap.add_argument("--spec", default=os.path.join(ROOT, "spec", "labels.txt"))
     ap.add_argument("--ref", default="")
     ap.add_argument("--conf", type=float, default=0.30)

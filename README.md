@@ -19,7 +19,14 @@
 カメラか画像ファイルを渡すと、その場で読みます。**「自動スキャン」を押すとカメラを見続け、プレートが
 現れたら自動で検出して読みます**（追跡しながらフレーム方向に確率を足し込むので、見続けるほど安定して
 確定します。1 フレームは既定の 640 で 5.4 秒、320 に落とせば 0.44 秒。推論は Web Worker）。**検出器も認識器も自前で学習したモデル**
-（既定は `models/plate_det_scratch_640.onnx` + `models/plate_ocr_ft1.onnx`）。
+（既定は `models/plate_det_scratch_640.onnx` + `models/plate_ocr_syn1.onnx`）。
+
+> **2026-11-10: 既定の認識器を `plate_ocr_syn1.onnx` に。** 公開データ（alpr_jp の実写を手で書き起こしたもの）と
+> [jp_lpr_image_cpp](https://github.com/yomei-o/jp_lpr_image_cpp) の合成（138 地名すべて・18 書体・4 隅から正面向きに切り出したもの）だけで
+> `plate_ocr_scratch.onnx` から学習し、種違いの 3 本の重みを平均したもの。自社の実写は使っていない。BSD-3-Clause。
+> alpr_jp の hold-out は 地名 91.7% / 94.3%（自家用 / 軽・事業用）・4 桁 100%。学習に無い書体で描いた合成では 地名 33.9% → 86.6%
+> （alpr_jp に無い地名 23.5% → 84.5%）。lpr_analyzer_cpp のサンプル動画（東京東部の 8 台）は 地名 0/7 → 5/7、分類番号 7/7。
+> 作り方と評価は lpr_analyzer_cpp の `models_noagpl/README.md`。`plate_ocr_ft1.onnx` / `plate_ocr_scratch.onnx` も比較用に残す。
 
 > **2026-11-09: 既定の認識器を `plate_ocr_ft1.onnx` に。** `plate_ocr_scratch.onnx`（ランダム初期化から学習）を出発点に、
 > alpr_jp と自社の実写（車・トラック・バスのナンバー 256 枚。画像とラベルは非公開）を半々で混ぜて 3,000 step 追加学習したもの。
