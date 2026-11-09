@@ -90,7 +90,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="rot_test.py")
     ap.add_argument("--alpr", default=os.path.join(ROOT, "..", "alpr_jp"))
     ap.add_argument("--det", default=os.path.join(ROOT, "models", "plate_det_v8n_640.onnx"))
-    ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr_v7_bal.onnx"))
+    ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr_scratch.onnx"))
     ap.add_argument("--corner", default="")
     ap.add_argument("--corner2", default="")
     ap.add_argument("--spec", default=os.path.join(ROOT, "spec", "labels.txt"))

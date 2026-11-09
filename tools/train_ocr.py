@@ -1,8 +1,8 @@
 """Train the recognizer (Python side of M5) and export it back to ONNX.
 
-Starts from the shipped weights, not from scratch: `tools/ocr_model.py` loads models/plate_ocr.onnx
-into the PyTorch port (verified to 3.3e-05), widens region 133 -> 138 append-only and adds the
-plate_kind / legible heads. So step 0 of training is already as accurate as what we ship.
+Starts from the shipped weights: `tools/ocr_model.py` loads models/plate_ocr_scratch.onnx (from-scratch, BSD)
+into the PyTorch port (already 11 heads / region 138, so nothing is widened). So step 0 of training
+is already as accurate as what we ship. `--init` takes any ONNX of the same structure.
 
 Data sources, mixed per batch:
   * synthetic dirs (`jlpr gen` / tools/gen.py) — every head labelled, unlimited volume
@@ -347,7 +347,7 @@ def main():
     ap.add_argument("--alpr-labels", dest="alpr_labels", default="",
                     help="spec/alpr_labels.tsv: teach every head on the real crops, correct misfiled "
                          "regions and add the 553 flat-folder (kei / commercial) crops")
-    ap.add_argument("--init", default=os.path.join(ROOT, "models", "plate_ocr.onnx"))
+    ap.add_argument("--init", default=os.path.join(ROOT, "models", "plate_ocr_scratch.onnx"))
     ap.add_argument("--spec", default=os.path.join(ROOT, "spec", "labels.txt"))
     ap.add_argument("--steps", type=int, default=500)
     ap.add_argument("--batch", type=int, default=16)

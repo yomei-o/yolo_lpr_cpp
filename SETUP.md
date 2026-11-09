@@ -60,7 +60,7 @@ python tools/train_ocr.py --synth data/synth --alpr ../alpr_jp --steps 3000 --ba
   --real-weight 0.4 --workers 4 --eval-every 250 --eval-limit 144 \
   --save ocr.pt --export models/plate_ocr_new.onnx --export-last models/plate_ocr_new_last.onnx
 
-./jlpr.exe train --init models/plate_ocr.onnx --synth data/synth --alpr ../alpr_jp \
+./jlpr.exe train --init models/plate_ocr_scratch.onnx --synth data/synth --alpr ../alpr_jp \
   --steps 3000 --batch 64 --lr 4e-4 --export models/plate_ocr_new.onnx
 
 # 実写の全 head を教える（どちらの学習器にも --alpr-labels spec/alpr_labels.tsv を足す）

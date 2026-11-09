@@ -19,9 +19,14 @@
 カメラか画像ファイルを渡すと、その場で読みます。**「自動スキャン」を押すとカメラを見続け、プレートが
 現れたら自動で検出して読みます**（追跡しながらフレーム方向に確率を足し込むので、見続けるほど安定して
 確定します。1 フレームは既定の 640 で 5.4 秒、320 に落とせば 0.44 秒。推論は Web Worker）。**検出器も認識器も自前で学習したモデル**
-（既定は `models/plate_det_v8n_640.onnx` + `models/plate_ocr_v7_bal.onnx`、実データ hold-out の地域名 **97.9%**）。
-**認識器も 2 つから選べます**: 「実データ重視」（地名 97.9%／2025 年追加の 5 地名は 28%）と
-「新地名対応」（十勝・日光・江戸川・安曇野・南信州を **76%**／地名 95.1%）。
+（既定は `models/plate_det_v8n_640.onnx` + `models/plate_ocr_scratch.onnx`）。
+
+> **2026-11-09: 認識器を入れ替えました。** 以前の `plate_ocr.onnx` / `plate_ocr_v*.onnx` は lpr_cpp の重み
+> （govtech パイプライン由来）から学習したものだったので、履歴ごと削除しました。いまの認識器
+> `models/plate_ocr_scratch.onnx` は lpr_analyzer_cpp で**ランダム初期化から**学習したもの（BSD-3-Clause）です。
+> 実データ hold-out は 地名 88-93%／4 桁 98-99%（[lpr_analyzer_cpp の models_noagpl](https://github.com/yomei-o/lpr_analyzer_cpp/tree/main/models_noagpl)）。
+> 4 桁は以前より良く、地名は以前（97.9%）に届いていません。同梱のバス写真は `習志野 30 き 3591`（正解は 横浜 200 か 3591）と読みます。
+> 以下の本文に出てくる v4〜v7 の数字は、削除前のモデルの記録です。
 検出器はページ上で 3 つから切り替えられます:
 
 | 検出器 | 得意 | 苦手 | `data/det_eval` recall |

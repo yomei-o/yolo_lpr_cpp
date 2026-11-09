@@ -50,7 +50,7 @@ def run(cmd):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--jlpr", default=os.path.join(ROOT, "jlpr.exe"))
-    ap.add_argument("--init", default=os.path.join(ROOT, "models", "plate_ocr.onnx"))
+    ap.add_argument("--init", default=os.path.join(ROOT, "models", "plate_ocr_scratch.onnx"))
     ap.add_argument("--synth", default=os.path.join(ROOT, "data", "synth5k"))
     ap.add_argument("--alpr", default="")
     ap.add_argument("--alpr-labels", dest="alpr_labels", default="",

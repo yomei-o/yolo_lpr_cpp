@@ -64,7 +64,7 @@ def main():
                     help="box layout of a v8 head: PlateYOLO(NMS stripped)=xyxy, plain Ultralytics "
                          "export=cxcywh. Reading one as the other puts plausible boxes in the wrong "
                          "place — which is how this very script first reported 'no detections'")
-    ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr.onnx"))
+    ap.add_argument("--ocr", default=os.path.join(ROOT, "models", "plate_ocr_scratch.onnx"))
     ap.add_argument("--box", nargs=4, type=float, default=None)
     ap.add_argument("--conf", type=float, default=0.05)
     ap.add_argument("--save-dir", default="")

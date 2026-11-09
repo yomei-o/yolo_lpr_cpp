@@ -2,6 +2,19 @@
 
 方針は [README.md](README.md)。ここは**現在地・次の一手・未確認事項**を書き続けるファイル。
 
+## 2026-11-09: govtech 由来の認識器を履歴ごと削除
+
+`models/plate_ocr.onnx`（lpr_cpp の govtech 重みをそのまま ONNX にしたもの）と、そこから転移した
+`plate_ocr_v2`〜`v7*`、`plate_det_yolox.onnx`（lpr_cpp の govtech 検出器）を git filter-repo で全コミットから消し、
+force push した。代わりに lpr_analyzer_cpp でランダム初期化から学習した `models/plate_ocr_scratch.onnx`（11 head、
+出力名も v7_bal と同じ）を同梱し、既定値をすべてそちらに向けた。
+
+- 同梱のバス写真は `習志野 30 き 3591`（正解 横浜 200 か 3591）。4 桁は読めるが地名・分類番号・ひらがなを外す。
+  `wasm/test_node.js` は既定で 4 桁だけ照合し、`STRICT=1` で全文を照合する。**次の一手は認識器の再学習で STRICT を通すこと**
+- `tools/ocr_model.py --check` / `tools/parity/infer.py` の参照（lpr_cpp/pure/ref）は lpr_cpp 側から消えたので、
+  9 head の forward parity はもう再現できない。11 head は ONNX と PyTorch の読み込みが 1e-6 で一致するのを確認した
+- 他のマシンの clone は履歴が変わったので、作り直すこと（`git pull` では直らない）
+
 ## 2026-11-09: 外で使って見つかった不具合を直した
 
 lpr_analyzer_cpp で認識器をゼロから学習したときに見つかったもの。
