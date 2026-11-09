@@ -21,8 +21,8 @@
 確定します。1 フレームは既定の 640 で 5.4 秒、320 に落とせば 0.44 秒。推論は Web Worker）。**検出器も認識器も自前で学習したモデル**
 （既定は `models/plate_det_v8n_640.onnx` + `models/plate_ocr_scratch.onnx`）。
 
-> **2026-11-09: 認識器を入れ替えました。** 以前の `plate_ocr.onnx` / `plate_ocr_v*.onnx` は lpr_cpp の重み
-> （govtech パイプライン由来）から学習したものだったので、履歴ごと削除しました。いまの認識器
+> **2026-11-09: 認識器を入れ替えました。** 以前の `plate_ocr.onnx` / `plate_ocr_v*.onnx` は、lpr_cpp の以前のモデルの
+> 重みから学習したものだったので、履歴ごと削除しました。いまの認識器
 > `models/plate_ocr_scratch.onnx` は lpr_analyzer_cpp で**ランダム初期化から**学習したもの（BSD-3-Clause）です。
 > 実データ hold-out は 地名 88-93%／4 桁 98-99%（[lpr_analyzer_cpp の models_noagpl](https://github.com/yomei-o/lpr_analyzer_cpp/tree/main/models_noagpl)）。
 > 4 桁は以前より良く、地名は以前（97.9%）に届いていません。同梱のバス写真は `横浜 200 か 3591` と全文正しく、黒ナンバーの写真は `横浜 480 ひ 4567`（正解 り）とひらがなだけ外します。

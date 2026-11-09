@@ -2,10 +2,10 @@
 
 方針は [README.md](README.md)。ここは**現在地・次の一手・未確認事項**を書き続けるファイル。
 
-## 2026-11-09: govtech 由来の認識器を履歴ごと削除
+## 2026-11-09: 以前のモデル由来の認識器を履歴ごと削除
 
-`models/plate_ocr.onnx`（lpr_cpp の govtech 重みをそのまま ONNX にしたもの）と、そこから転移した
-`plate_ocr_v2`〜`v7*`、`plate_det_yolox.onnx`（lpr_cpp の govtech 検出器）を git filter-repo で全コミットから消し、
+`models/plate_ocr.onnx`（lpr_cpp の以前のモデルの重みをそのまま ONNX にしたもの）と、そこから転移した
+`plate_ocr_v2`〜`v7*`、`plate_det_yolox.onnx`（lpr_cpp の以前の検出器）を git filter-repo で全コミットから消し、
 force push した。代わりに lpr_analyzer_cpp でランダム初期化から学習した `models/plate_ocr_scratch.onnx`（11 head、
 出力名も v7_bal と同じ）を同梱し、既定値をすべてそちらに向けた。
 
