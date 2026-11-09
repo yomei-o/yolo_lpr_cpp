@@ -90,12 +90,7 @@ function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
   if (nplates < 1) fail('no plate detected on a real photo');
 
   const best = res.plates[0];
-  // 2026-11-09: the shipped recognizer is now the from-scratch one (the lpr_cpp-derived ones were
-  // removed). It reads the digits but not yet 横浜 200 か on this bus, so by default only the 4 digits
-  // must match; STRICT=1 demands the whole string (the goal for the next retraining).
-  const digits = (t) => t.split(' ').pop();
-  if (process.env.STRICT === '1' ? best.text !== expect : digits(best.text) !== digits(expect))
-    fail('text is "' + best.text + '", expected "' + expect + '"' + (process.env.STRICT === '1' ? '' : ' (digits)'));
+  if (best.text !== expect) fail('text is "' + best.text + '", expected "' + expect + '"');
   if (best.det < MIN_DET) fail('detector score ' + best.det.toFixed(2) + ' is below the floor ' + MIN_DET);
   for (let i = 0; EXPECT_BOX && i < 4; ++i) {
     if (Math.abs(best.box[i] - EXPECT_BOX[i]) > 8) {
@@ -105,5 +100,5 @@ function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
   // a scatter of boxes at the threshold is the double-sigmoid signature; there should be few
   if (res.plates.length > 3) fail('too many plate boxes (' + res.plates.length + ') — decode looks wrong');
 
-  console.log('PASS: read "' + best.text + '" (' + (process.env.STRICT === '1' ? 'full' : 'digits') + ' check against ' + expect + ')');
+  console.log('PASS: WASM matches the CLI reading (' + expect + ')');
 })();

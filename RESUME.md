@@ -9,8 +9,11 @@
 force push した。代わりに lpr_analyzer_cpp でランダム初期化から学習した `models/plate_ocr_scratch.onnx`（11 head、
 出力名も v7_bal と同じ）を同梱し、既定値をすべてそちらに向けた。
 
-- 同梱のバス写真は `習志野 30 き 3591`（正解 横浜 200 か 3591）。4 桁は読めるが地名・分類番号・ひらがなを外す。
-  `wasm/test_node.js` は既定で 4 桁だけ照合し、`STRICT=1` で全文を照合する。**次の一手は認識器の再学習で STRICT を通すこと**
+- **最初に入れた `plate_ocr_scratch.onnx` は版を間違えていた**（lpr_analyzer_cpp の `models_noagpl/` の 1 回目＝合成だけの版）。
+  正しいのは `docs/models_bsd/plate_ocr_scratch.onnx`（デモと同じ版）で、同日差し替えた。hold-out で軽・事業用の
+  分類番号 2 文字目が 34.6% → 98.1%、ひらがな 64.4% → 92.3% と別物だった
+- いまの版: 同梱のバス写真は `横浜 200 か 3591` で全文正解（`wasm/test_node.js` は元どおり全文照合で PASS）。
+  黒ナンバーの写真（`assets/kei-commercial-...`）は `横浜 480 ひ 4567` で、ひらがな（り）だけ外す
 - `tools/ocr_model.py --check` / `tools/parity/infer.py` の参照（lpr_cpp/pure/ref）は lpr_cpp 側から消えたので、
   9 head の forward parity はもう再現できない。11 head は ONNX と PyTorch の読み込みが 1e-6 で一致するのを確認した
 - 他のマシンの clone は履歴が変わったので、作り直すこと（`git pull` では直らない）
