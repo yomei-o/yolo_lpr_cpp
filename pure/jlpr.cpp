@@ -1186,7 +1186,7 @@ static int cmd_train(int argc, char** argv) {
   if (model == "det") return cmd_train_det(argc, argv);
   if (model == "corner") return cmd_train_corner(argc, argv);
   if (model != "ocr") { printf("jlpr train: --model must be ocr, det or corner\n"); return 1; }
-  std::string onnx_in = arg_of(argc, argv, "--init", "models/plate_ocr_scratch.onnx");
+  std::string onnx_in = arg_of(argc, argv, "--init", "models/plate_ocr_ft1.onnx");
   std::string spec_path = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string synth = arg_of(argc, argv, "--synth", "");
   std::string alpr = arg_of(argc, argv, "--alpr", "");
@@ -1551,7 +1551,7 @@ static int cmd_val_det(int argc, char** argv) {
 // the corner net), same numbers — so a model can be judged with no Python anywhere in the loop.
 static int cmd_val(int argc, char** argv) {
   if (arg_of(argc, argv, "--model", "ocr") == "det") return cmd_val_det(argc, argv);
-  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_scratch.onnx");
+  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_ft1.onnx");
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string data = arg_of(argc, argv, "--data", "");
   std::string kind = arg_of(argc, argv, "--kind", "alpr");
@@ -1763,7 +1763,7 @@ static int cmd_pseudo_label(int argc, char** argv) {
 // fonts as training); it answers "is this class reachable", not "how good is it in the wild".
 static int cmd_check_regions(int argc, char** argv) {
   std::string data = arg_of(argc, argv, "--data", "");
-  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_scratch.onnx");
+  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_ft1.onnx");
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string alpr = arg_of(argc, argv, "--alpr", "");    // which names real data covers
   int limit = std::atoi(arg_of(argc, argv, "--limit", "0").c_str());
@@ -1980,7 +1980,7 @@ static int cmd_strip_nms(int argc, char** argv) {
 static int cmd_recolor_test(int argc, char** argv) {
   std::string img = arg_of(argc, argv, "--img", "");
   std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_v8n_320.onnx");
-  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_scratch.onnx");
+  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_ft1.onnx");
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string save = arg_of(argc, argv, "--save-dir", "");
   float bx0 = (float)atof(arg_of(argc, argv, "--x1", "-1").c_str());
@@ -2081,7 +2081,7 @@ static int cmd_recolor_test(int argc, char** argv) {
 static int cmd_rot_test(int argc, char** argv) {
   std::string alpr = arg_of(argc, argv, "--alpr", "../alpr_jp");
   std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_v8n_640.onnx");
-  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_scratch.onnx");
+  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_ft1.onnx");
   std::string corner_p = arg_of(argc, argv, "--corner", "");
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string angles = arg_of(argc, argv, "--angles",
@@ -2304,7 +2304,7 @@ static int cmd_export(int argc, char** argv) {
 // Parity against the fixture that came from the ORIGINAL ONNX (input.bin -> refout.bin, produced
 // by onnxruntime). This is what proves the exported graph is the same function, not just loadable.
 static int cmd_parity_ocr(int argc, char** argv) {
-  std::string onnx = arg_of(argc, argv, "--ocr", "models/plate_ocr_scratch.onnx");
+  std::string onnx = arg_of(argc, argv, "--ocr", "models/plate_ocr_ft1.onnx");
   std::string ref = arg_of(argc, argv, "--ref", "");
   if (ref.empty()) { printf("usage: jlpr parity-ocr --ocr <onnx> --ref <dir with input.bin refout.bin>\n"); return 1; }
   if (ref.back() != '/' && ref.back() != '\\') ref += '/';
@@ -2375,7 +2375,7 @@ static int cmd_detect(int argc, char** argv) {
   std::string img = arg_of(argc, argv, "--img", "");
   // default: the BSD-3-Clause detector (random init, lpr_analyzer_cpp). PlateYOLO-JP needs --fmt xyxy.
   std::string det_p = arg_of(argc, argv, "--det", "models/plate_det_scratch_640.onnx");
-  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_scratch.onnx");
+  std::string ocr_p = arg_of(argc, argv, "--ocr", "models/plate_ocr_ft1.onnx");
   std::string corner_p = arg_of(argc, argv, "--corner", "");   // empty = box crop + margin TTA
   std::string spec_p = arg_of(argc, argv, "--spec", "spec/labels.txt");
   std::string outp = arg_of(argc, argv, "--out", "");

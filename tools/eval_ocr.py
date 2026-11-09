@@ -193,7 +193,7 @@ def main():
     ap.add_argument("--data", required=True, help="alpr_jp checkout root, or a generated dir")
     ap.add_argument("--kind", default="alpr", choices=["alpr", "synth"])
     ap.add_argument("--models", default="ours,ekmixer")
-    ap.add_argument("--ours", default=os.path.join(ROOT, "models", "plate_ocr_scratch.onnx"))
+    ap.add_argument("--ours", default=os.path.join(ROOT, "models", "plate_ocr_ft1.onnx"))
     ap.add_argument("--ekmixer", default=os.path.join(ROOT, "..", "_pyj", "weight", "EkMixer-128x128.onnx"))
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--single", action="store_true", help="one crop instead of the margin spread")

@@ -239,7 +239,7 @@ def check(onnx_path, ref_dir, spec_path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
-    ap.add_argument("--onnx", default=os.path.join(ROOT, "models", "plate_ocr_scratch.onnx"))
+    ap.add_argument("--onnx", default=os.path.join(ROOT, "models", "plate_ocr_ft1.onnx"))
     ap.add_argument("--ref", default="")
     ap.add_argument("--spec", default=os.path.join(ROOT, "spec", "labels.txt"))
     a = ap.parse_args()

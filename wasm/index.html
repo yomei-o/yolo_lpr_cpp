@@ -62,7 +62,8 @@
   </label>
   <label>認識器
     <select id="ocrsel">
-      <option value="scratch">自前学習（ランダム初期化から、BSD-3-Clause）</option>
+      <option value="ft1">自前学習＋自社の実写で追加学習（既定、BSD-3-Clause）</option>
+      <option value="scratch">自前学習のみ（ランダム初期化から、BSD-3-Clause）</option>
     </select>
   </label>
   <label title="まっすぐ置いた向きで見つからないとき、画像を ±30° 回して探し直します（そのときだけ 3 倍かかります）">
@@ -100,6 +101,7 @@ const DETECTORS = {
 // One recogniser: trained from random initialisation in lpr_analyzer_cpp (BSD-3-Clause). The earlier
 // v7_bal / v6_last were derived from lpr_cpp's weights and were removed on 2026-11-09.
 const OCRS = {
+  ft1: { path: '../models/plate_ocr_ft1.onnx', label: '自前学習＋実写で追加学習 (ft1)' },
   scratch: { path: '../models/plate_ocr_scratch.onnx', label: '自前学習 (scratch)' },
 };
 const CORNER = '../models/plate_corner.onnx';
