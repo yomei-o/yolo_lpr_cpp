@@ -18,7 +18,7 @@
   button.live { border-color: var(--ok); color: var(--ok); font-weight: 600; }
   #stage { position: relative; display: inline-block; max-width: 100%; }
   video, canvas { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; }
-  #overlay { position: absolute; left: 0; top: 0; border: none; }
+  #overlay { position: absolute; left: 1px; top: 1px; border: none; pointer-events: none; }
   #plates { font-size: 1.5rem; font-weight: 600; margin: 10px 0 2px; min-height: 1.6em; }
   #plates .settled { color: var(--ok); }
   #status { font-size: .85rem; opacity: .8; min-height: 1.2em; }
@@ -154,6 +154,7 @@ function onWorker(e) {
   if (m.type === 'result') {
     busy = false;
     const res = JSON.parse(m.json);
+    paintOverlay(m.overlay, m.w, m.h);
     if (m.track) drawTracks(res.tracks || [], m.ms);
     else drawPlates(res.plates || [], m.ms);
     if (live) requestAnimationFrame(pump);
@@ -167,10 +168,21 @@ function updateButtons() {
   $('btn-live').disabled = !(ready && $('video').srcObject);
 }
 
+// The overlay sits on whichever element is showing: the canvas for a file, the <video> for the
+// camera (the canvas is hidden then, so sizing from it gave a 0-px overlay — no frames visible).
 function sizeOverlay() {
-  ov.width = cv.width; ov.height = cv.height;
-  ov.style.width = cv.clientWidth + 'px';
-  ov.style.height = cv.clientHeight + 'px';
+  const v = $('video');
+  const shown = (v.style.display !== 'none' && v.srcObject) ? v : cv;
+  if (ov.width !== cv.width || ov.height !== cv.height) { ov.width = cv.width; ov.height = cv.height; }
+  ov.style.width = shown.clientWidth + 'px';
+  ov.style.height = shown.clientHeight + 'px';
+}
+
+// The plate frames and numbers come from C++ (jl_draw) as a transparent RGBA layer.
+function paintOverlay(buf, w, h) {
+  if (!buf || w !== cv.width || h !== cv.height) { octx.clearRect(0, 0, ov.width, ov.height); return; }
+  sizeOverlay();
+  octx.putImageData(new ImageData(new Uint8ClampedArray(buf), w, h), 0, 0);
 }
 
 // ---- frame sources -------------------------------------------------------------------------
@@ -258,26 +270,10 @@ $('conf').addEventListener('input', () => { $('confv').textContent = (+$('conf')
 $('detsel').addEventListener('change', () => { stopLive(); boot(); });
 $('ocrsel').addEventListener('change', () => { stopLive(); boot(); });
 
-// ---- drawing -------------------------------------------------------------------------------
-function box(x1, y1, x2, y2, colour, label, sub) {
-  octx.lineWidth = Math.max(2, Math.round(ov.width / 320));
-  octx.strokeStyle = colour;
-  octx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-  const fs = Math.max(14, Math.round(ov.width / 34));
-  octx.font = fs + 'px system-ui, sans-serif';
-  const text = label + (sub ? '  ' + sub : '');
-  const w = octx.measureText(text).width + 10;
-  octx.fillStyle = 'rgba(0,0,0,.65)';
-  octx.fillRect(x1, Math.max(0, y1 - fs - 8), w, fs + 8);
-  octx.fillStyle = colour;
-  octx.fillText(text, x1 + 5, Math.max(fs, y1 - 6));
-}
-
+// ---- result text (the frames on the image are drawn in C++, see paintOverlay) ---------------
 function drawPlates(plates, ms) {
-  octx.clearRect(0, 0, ov.width, ov.height);
   const lines = [];
   for (const p of plates) {
-    box(p.box[0], p.box[1], p.box[2], p.box[3], '#e33', p.text, '(' + p.det.toFixed(2) + ')');
     lines.push(p.text + '　(検出 ' + p.det.toFixed(2) + ' / 地域名 ' + p.conf[0].toFixed(2) + ')');
   }
   $('plates').textContent = lines.join('　／　') || '（プレートなし）';
@@ -285,12 +281,8 @@ function drawPlates(plates, ms) {
 }
 
 function drawTracks(tracks, ms) {
-  octx.clearRect(0, 0, ov.width, ov.height);
   const parts = [];
   for (const t of tracks) {
-    const colour = t.settled ? '#1a8' : '#e33';
-    box(t.box[0], t.box[1], t.box[2], t.box[3], colour, t.text,
-        t.frames + 'f' + (t.settled ? ' 確定' : ''));
     parts.push('<span class="' + (t.settled ? 'settled' : '') + '">' + t.text + '</span>'
                + ' <small>' + t.frames + ' フレーム / 地域名 ' + (t.conf[0] || 0).toFixed(2) + '</small>');
   }

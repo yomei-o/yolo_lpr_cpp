@@ -80,7 +80,28 @@ function fail(msg) { console.log('FAIL: ' + msg); process.exit(1); }
   const nplates = M._jl_run(pf, w, h, 0.30, 1, -1, -1, -1, -1, DET_KIND);
   const secs = (Date.now() - t0) / 1000;
   const res = JSON.parse(M.UTF8ToString(M._jl_result()));
+
+  // The page shows the result as a transparent RGBA layer drawn in C++ (jl_draw): a frame around
+  // each plate and its number on a tag above it. Check the layer is not blank where the box is,
+  // and stays see-through over the plate itself.
+  const drawn = M._jl_draw(pf, w, h, 1);
+  const layer = M.HEAPU8.slice(pf, pf + w * h * 4);
   M._free(pf);
+  if (nplates >= 1) {
+    if (drawn !== nplates) fail('jl_draw drew ' + drawn + ' plate(s), jl_run found ' + nplates);
+    const b = res.plates[0].box.map(Math.trunc);   // overlay.hpp truncates the same way
+    const alpha = (x, y) => layer[(y * w + x) * 4 + 3];
+    let edge = 0, inside = 0, tag = 0;
+    for (let x = b[0]; x <= b[2]; ++x) edge += alpha(x, Math.max(0, b[1] - 2)) > 0;
+    for (let y = b[1] + 4; y < b[3] - 4; ++y)
+      for (let x = b[0] + 4; x < b[2] - 4; ++x) inside += alpha(x, y) > 0;
+    for (let y = Math.max(0, b[1] - 20); y < b[1] - 3; ++y)
+      for (let x = b[0]; x < Math.min(w, b[0] + 40); ++x) tag += alpha(x, y) > 0;
+    console.log('jl_draw: ' + drawn + ' plate(s), top edge ' + edge + ' px, inside ' + inside + ' px, tag ' + tag + ' px');
+    if (edge < (b[2] - b[0]) * 0.9) fail('jl_draw: no frame along the top of the box');
+    if (inside > 0) fail('jl_draw: the layer covers the plate itself');
+    if (tag === 0) fail('jl_draw: no number tag above the box');
+  }
 
   console.log('detect+read: ' + nplates + ' plate(s) in ' + secs.toFixed(2) + 's on ' + w + 'x' + h);
   for (const p of res.plates) {

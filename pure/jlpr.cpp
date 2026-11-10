@@ -18,6 +18,7 @@
 #include "spec.hpp"
 #include "onnx_export_lpr.hpp"
 #include "pipeline.hpp"
+#include "overlay.hpp"
 #include "gen_render.hpp"
 #include "gen_det.hpp"
 #include "onnx_train.hpp"
@@ -2340,19 +2341,6 @@ static int cmd_parity_ocr(int argc, char** argv) {
   return (worst < 1e-3f && argmatch == (int)hn.size()) ? 0 : 1;
 }
 
-static void draw_box(unsigned char* im, int W, int H, int x1, int y1, int x2, int y2,
-                     unsigned char r, unsigned char g, unsigned char b, int t = 3) {
-  auto put = [&](int a, int c) {
-    if (a < 0 || c < 0 || a >= W || c >= H) return;
-    unsigned char* q = &im[((size_t)c * W + a) * 3];
-    q[0] = r; q[1] = g; q[2] = b;
-  };
-  for (int k = 0; k < t; ++k) {
-    for (int a = x1; a <= x2; ++a) { put(a, y1 + k); put(a, y2 - k); }
-    for (int c = y1; c <= y2; ++c) { put(x1 + k, c); put(x2 - k, c); }
-  }
-}
-
 // Dump a decoded frame as raw RGBA (little-endian int32 w, h, then w*h*4 bytes). The node and
 // browser tests need the *same pixels* the CLI saw, and they have no image decoder.
 static int cmd_rgba(int argc, char** argv) {
@@ -2450,7 +2438,8 @@ static int cmd_detect(int argc, char** argv) {
       for (size_t h = 0; h < r.conf.size(); ++h) printf(" %.2f", r.conf[h]);
       printf("\n");
     }
-    draw_box(im, W, H, (int)b.x1, (int)b.y1, (int)b.x2, (int)b.y2, 255, 60, 60);
+    // same drawing as the WASM demo (overlay.hpp): frame + 4-digit number
+    ov::plate(ov::Canvas{im, W, H, 3}, b.x1, b.y1, b.x2, b.y2, ov::number_label(r.plate), ov::kRed);
   }
   if (as_json) out_raw(jl::plates_json(boxes, reads) + "\n");
   if (!outp.empty()) {

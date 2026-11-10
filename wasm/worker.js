@@ -5,7 +5,8 @@
 // Messages in:  {type:'init', ocr, det, corner, spec, detKind}   ArrayBuffers for the models
 //               {type:'frame', pixels, w, h, conf, tta, detKind, track}
 //               {type:'reset'}                                   clear the tracks
-// Messages out: {type:'ready', ...} | {type:'result', json, ms} | {type:'log', text} | {type:'error'}
+// Messages out: {type:'ready', ...} | {type:'result', json, ms, overlay, w, h} | {type:'log', text} | {type:'error'}
+//               overlay = RGBA layer (transparent except the plate frames + numbers), drawn in C++ by jl_draw
 let M = null;
 let ready = false;
 
@@ -71,8 +72,13 @@ self.onmessage = async (e) => {
         json = M.UTF8ToString(M._jl_result());
       }
       const ms = performance.now() - t0;
+      // The frame and number are drawn in C++ (jl_draw) into a transparent layer, reusing the
+      // frame's buffer; the page lays it over the image / live camera preview.
+      M._jl_draw(p, m.w, m.h, 1);
+      const overlay = M.HEAPU8.slice(p, p + m.w * m.h * 4).buffer;
       M._free(p);
-      self.postMessage({ type: 'result', json: json, ms: ms, track: !!m.track });
+      self.postMessage({ type: 'result', json: json, ms: ms, track: !!m.track,
+                         overlay: overlay, w: m.w, h: m.h }, [overlay]);
     }
   } catch (err) {
     self.postMessage({ type: 'error', text: String(err && err.message || err) });

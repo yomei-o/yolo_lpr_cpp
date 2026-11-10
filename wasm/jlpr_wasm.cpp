@@ -6,6 +6,7 @@
 #include "spec.hpp"
 #include "pipeline.hpp"
 #include "track.hpp"
+#include "overlay.hpp"
 #include <emscripten/emscripten.h>
 #include <string>
 #include <vector>
@@ -21,6 +22,16 @@ static jl::Tracker g_tracker;
 static jl::TrackerCfg g_tcfg;
 static int g_rot_search = 0;      // 1 = also search frames rotated +-30 deg when nothing is found
 static int g_refine = 0;          // extra corner-net passes (pipeline.hpp refine_corners)
+
+// What the last jl_run / jl_track_step found, kept for jl_draw.
+struct DrawItem { jl::Box box; std::string label; bool settled; };
+static std::vector<DrawItem> g_draw;
+
+static void remember_plates(const std::vector<jl::Box>& boxes, const std::vector<jl::Read>& reads) {
+  g_draw.clear();
+  for (size_t i = 0; i < boxes.size() && i < reads.size(); ++i)
+    g_draw.push_back({boxes[i], ov::number_label(reads[i].plate), false});
+}
 
 extern "C" {
 
@@ -66,6 +77,7 @@ EMSCRIPTEN_KEEPALIVE int jl_load_spec(const char* text) {
 // which is exactly the kind of failure a demo hides. Hence an explicit parameter, no guessing.
 EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float conf, int tta,
                                 float bx0, float by0, float bx1, float by1, int det_kind) {
+  g_draw.clear();
   if (!g_ocr_ok || !g_spec_ok) { g_result = "{\"error\":\"models not loaded\"}"; return -1; }
   std::vector<unsigned char> rgb((size_t)w * h * 3);
   for (size_t i = 0, n = (size_t)w * h; i < n; ++i) {
@@ -100,6 +112,7 @@ EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float c
     g_last_probs.clear();
     for (const jl::Read& r : reads) g_last_probs.push_back(r.probs);
     g_result = jl::plates_json(boxes, reads);
+    remember_plates(boxes, reads);
     return (int)boxes.size();
   }
   if (bx0 >= 0) {
@@ -132,6 +145,7 @@ EMSCRIPTEN_KEEPALIVE int jl_run(const unsigned char* rgba, int w, int h, float c
   for (const jl::Read& r : reads) g_last_probs.push_back(r.probs);
   std::string o = jl::plates_json(boxes, reads);
   g_result = o;
+  remember_plates(boxes, reads);
   return (int)boxes.size();
 }
 
@@ -148,9 +162,24 @@ EMSCRIPTEN_KEEPALIVE int jl_track_step(const unsigned char* rgba, int w, int h, 
   // jl_run already filled g_last_boxes/g_last_reads for this frame
   g_tracker.update(g_last_boxes, g_last_probs, g_spec, g_tcfg);
   g_result = jl::tracks_json(g_tracker, g_tcfg);
+  g_draw.clear();
+  for (const jl::Track& t : g_tracker.tracks())
+    g_draw.push_back({t.box, ov::number_label(t.plate), t.stable >= g_tcfg.stable_needed});
   return (int)g_tracker.tracks().size();
 }
 
 EMSCRIPTEN_KEEPALIVE const char* jl_tracks() { return g_result.c_str(); }
+
+// Draw the last result into an RGBA buffer (w*h*4): a frame around each plate and its 4-digit
+// number above it. clear=1 first makes the buffer fully transparent — the page lays that layer over
+// the live camera preview; clear=0 draws straight onto a frame. Red = read, green = tracker settled.
+// Returns the number of plates drawn.
+EMSCRIPTEN_KEEPALIVE int jl_draw(unsigned char* rgba, int w, int h, int clear) {
+  if (clear) std::fill(rgba, rgba + (size_t)w * h * 4, (unsigned char)0);
+  const ov::Canvas cv{rgba, w, h, 4};
+  for (const DrawItem& d : g_draw)
+    ov::plate(cv, d.box.x1, d.box.y1, d.box.x2, d.box.y2, d.label, d.settled ? ov::kGreen : ov::kRed);
+  return (int)g_draw.size();
+}
 
 }  // extern "C"
